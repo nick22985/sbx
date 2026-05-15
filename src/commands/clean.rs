@@ -13,10 +13,10 @@ pub fn run(flavor: Option<&str>) {
     };
     for f in flavors {
         for v in flavor_volumes(f) {
-            if volume_exists(v) {
+            if volume_exists(&v) {
                 log(format!("removing volume {v}"));
                 let _ = Command::new("docker")
-                    .args(["volume", "rm", v])
+                    .args(["volume", "rm", &v])
                     .stdout(Stdio::null())
                     .status();
             }

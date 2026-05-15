@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::project::{project_name, sbx_file};
-use crate::util::{home_dir, log};
+use crate::util::{confirm, die, home_dir, log};
 
 pub const FORWARDED_VARS: &[&str] = &[
     "SBX_RUN_SCRIPTS",
@@ -51,6 +51,20 @@ pub fn stdio_is_tty() -> bool {
 mod libc_compat {
     unsafe extern "C" {
         pub fn isatty(fd: i32) -> i32;
+        pub fn signal(signum: i32, handler: usize) -> usize;
+    }
+}
+
+extern "C" fn signal_nop(_: i32) {}
+
+fn shield_parent_signals() {
+    const SIGHUP: i32 = 1;
+    const SIGINT: i32 = 2;
+    const SIGTERM: i32 = 15;
+    unsafe {
+        libc_compat::signal(SIGHUP, signal_nop as *const () as usize);
+        libc_compat::signal(SIGINT, signal_nop as *const () as usize);
+        libc_compat::signal(SIGTERM, signal_nop as *const () as usize);
     }
 }
 
@@ -107,6 +121,7 @@ fn container_inspect_bridge(field: &str) -> Option<String> {
 #[derive(Clone, Copy)]
 pub enum Network<'a> {
     Bridge,
+    UserDefined(&'a str),
     ShareWith(&'a str),
 }
 
@@ -154,7 +169,6 @@ impl PortSpec {
                 .collect::<Vec<_>>()
                 .join(" ")
         ));
-        log("hint: dev server must bind to 0.0.0.0 in the container (e.g. vite --host, HOST=0.0.0.0)");
         for p in &self.ports {
             out.push("-p".to_string());
             out.push(format!("127.0.0.1:{p}:{p}"));
@@ -233,25 +247,133 @@ pub fn project_ssh_enabled(project_root: &Path) -> bool {
     f.is_file()
 }
 
+pub fn project_docker_enabled(project_root: &Path) -> bool {
+    let f = sbx_file(project_root, "docker");
+    f.is_file()
+}
+
+pub fn host_docker_socket() -> PathBuf {
+    if let Ok(h) = std::env::var("DOCKER_HOST")
+        && let Some(rest) = h.strip_prefix("unix://")
+        && !rest.is_empty()
+    {
+        return PathBuf::from(rest);
+    }
+    PathBuf::from("/var/run/docker.sock")
+}
+
+fn socket_gid(sock: &Path) -> Option<u32> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(sock).ok().map(|m| m.gid())
+}
+
+/// SECURITY: this is effectively root on the host — anything inside can
+/// `docker run --privileged -v /:/host …` to escape. Opt-in only.
+pub fn docker_socket_mount_args() -> Vec<String> {
+    let sock = host_docker_socket();
+    use std::os::unix::fs::FileTypeExt;
+    match std::fs::metadata(&sock) {
+        Ok(m) if m.file_type().is_socket() => {}
+        Ok(_) => {
+            log(format!(
+                "docker socket {} is not a socket; skipping mount",
+                sock.display()
+            ));
+            return Vec::new();
+        }
+        Err(e) => {
+            log(format!(
+                "docker socket {} not accessible ({e}); skipping mount",
+                sock.display()
+            ));
+            return Vec::new();
+        }
+    }
+    let sock_s = sock.display().to_string();
+    let mut out = vec!["-v".into(), format!("{sock_s}:/var/run/docker.sock")];
+    if let Some(gid) = socket_gid(&sock) {
+        out.push("--group-add".into());
+        out.push(gid.to_string());
+    }
+    log(format!(
+        "mounting host docker socket: {sock_s} (host root inside container)"
+    ));
+    out
+}
+
+enum AgentStatus {
+    HasKeys,
+    NoKeys,
+    Unreachable,
+}
+
+fn ssh_add_status(sock: &str) -> AgentStatus {
+    let status = Command::new("ssh-add")
+        .arg("-l")
+        .env("SSH_AUTH_SOCK", sock)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    match status.ok().and_then(|s| s.code()) {
+        Some(0) => AgentStatus::HasKeys,
+        Some(1) => AgentStatus::NoKeys,
+        _ => AgentStatus::Unreachable,
+    }
+}
+
+pub fn ensure_ssh_agent_ready(project_root: &Path) {
+    if !project_ssh_enabled(project_root) {
+        return;
+    }
+    let sock = match std::env::var("SSH_AUTH_SOCK") {
+        Ok(s) if !s.is_empty() => s,
+        _ => die(
+            ".sbx/ssh is enabled but SSH_AUTH_SOCK is empty on host.\n  start an agent and load a key, e.g.:\n    eval \"$(ssh-agent)\" && ssh-add",
+        ),
+    };
+    let meta = std::fs::metadata(&sock).unwrap_or_else(|e| {
+        die(format!(
+            "SSH_AUTH_SOCK={sock} not accessible ({e}). is the agent still running?"
+        ))
+    });
+    use std::os::unix::fs::FileTypeExt;
+    if !meta.file_type().is_socket() {
+        die(format!("SSH_AUTH_SOCK={sock} is not a socket"));
+    }
+    match ssh_add_status(&sock) {
+        AgentStatus::HasKeys => {}
+        AgentStatus::NoKeys => {
+            log("ssh-agent has no keys loaded");
+            let prompt_ok = stdio_is_tty() && confirm("add default identities now? (ssh-add)");
+            if !prompt_ok {
+                die("aborting: no keys in agent. run `ssh-add` (or `ssh-add ~/.ssh/id_…`) and retry");
+            }
+            let ran = Command::new("ssh-add").env("SSH_AUTH_SOCK", &sock).status();
+            if !matches!(ran, Ok(s) if s.success()) {
+                die("ssh-add failed; aborting");
+            }
+            if !matches!(ssh_add_status(&sock), AgentStatus::HasKeys) {
+                die("ssh-add reported success but the agent still has no keys; aborting");
+            }
+        }
+        AgentStatus::Unreachable => die(format!(
+            "SSH_AUTH_SOCK={sock} but ssh-add can't talk to the agent (stale socket?)"
+        )),
+    }
+}
+
 pub fn ssh_mount_args(project_root: &Path, container_home: &Path) -> Vec<String> {
     if !project_ssh_enabled(project_root) {
         return Vec::new();
     }
-    let Ok(sock) = std::env::var("SSH_AUTH_SOCK") else {
-        log(".sbx/ssh set but SSH_AUTH_SOCK is empty on host; skipping agent forward");
-        return Vec::new();
-    };
-    let meta = match std::fs::metadata(&sock) {
-        Ok(m) => m,
-        Err(_) => {
-            log(format!("SSH_AUTH_SOCK={sock} is not accessible; skipping"));
-            return Vec::new();
-        }
-    };
+    let sock = std::env::var("SSH_AUTH_SOCK").unwrap_or_else(|_| {
+        die(".sbx/ssh is enabled but SSH_AUTH_SOCK is empty (call ensure_ssh_agent_ready first)")
+    });
+    let meta = std::fs::metadata(&sock)
+        .unwrap_or_else(|e| die(format!("SSH_AUTH_SOCK={sock} not accessible: {e}")));
     use std::os::unix::fs::FileTypeExt;
     if !meta.file_type().is_socket() {
-        log(format!("SSH_AUTH_SOCK={sock} is not a socket; skipping"));
-        return Vec::new();
+        die(format!("SSH_AUTH_SOCK={sock} is not a socket"));
     }
     let ch = container_home.display();
     let mut out = vec![
@@ -283,9 +405,10 @@ pub struct RunSpec<'a> {
     pub use_hostname: bool,
     pub publish_ports: PortSpec,
     pub extra_host_args: Vec<String>,
-    pub host_workspace: bool,
     pub extra_mounts: Vec<PathBuf>,
     pub container_home: PathBuf,
+    pub labels: Vec<String>,
+    pub mount_docker_socket: bool,
 }
 
 pub fn run_container(spec: RunSpec<'_>) -> i32 {
@@ -314,6 +437,10 @@ pub fn run_container(spec: RunSpec<'_>) -> i32 {
         Network::Bridge => {
             cmd.arg("--add-host=host.docker.internal:host-gateway");
         }
+        Network::UserDefined(net) => {
+            cmd.args(["--network", net]);
+            cmd.arg("--add-host=host.docker.internal:host-gateway");
+        }
         Network::ShareWith(name) => {
             cmd.args(["--network", &format!("container:{name}")]);
         }
@@ -330,19 +457,20 @@ pub fn run_container(spec: RunSpec<'_>) -> i32 {
             cmd.args(["-e", &format!("{v}={val}")]);
         }
     }
-    let workspace = if spec.host_workspace {
-        spec.project_root.display().to_string()
-    } else {
-        "/workspace".to_string()
-    };
+    let workspace = spec.project_root.display().to_string();
     cmd.args(["-w", &workspace]);
-    cmd.arg("-v")
-        .arg(format!("{}:{workspace}", spec.project_root.display()));
+    cmd.arg("-v").arg(format!("{workspace}:{workspace}"));
+    cmd.args(["-e", &format!("SBX_PROJECT_DIR={workspace}")]);
     for arg in worktree_mount_args(spec.project_root) {
         cmd.arg(arg);
     }
     for arg in ssh_mount_args(spec.project_root, &spec.container_home) {
         cmd.arg(arg);
+    }
+    if spec.mount_docker_socket {
+        for arg in docker_socket_mount_args() {
+            cmd.arg(arg);
+        }
     }
     for path in &spec.extra_mounts {
         if !path.is_dir() {
@@ -362,11 +490,15 @@ pub fn run_container(spec: RunSpec<'_>) -> i32 {
     for arg in spec.publish_ports.to_docker_args() {
         cmd.arg(arg);
     }
+    for arg in &spec.labels {
+        cmd.arg(arg);
+    }
     cmd.arg(spec.image);
     for a in &spec.entry {
         cmd.arg(a);
     }
 
+    shield_parent_signals();
     match cmd.status() {
         Ok(s) => s.code().unwrap_or(1),
         Err(e) => {
@@ -376,7 +508,7 @@ pub fn run_container(spec: RunSpec<'_>) -> i32 {
     }
 }
 
-pub fn exec_into(container: &str, entry: &[String]) -> io::Error {
+pub fn exec_into(container: &str, project_root: &Path, entry: &[String]) -> io::Error {
     let mut cmd = Command::new("docker");
     cmd.arg("exec");
     if stdio_is_tty() {
@@ -395,7 +527,7 @@ pub fn exec_into(container: &str, entry: &[String]) -> io::Error {
             cmd.args(["-e", &format!("{v}={val}")]);
         }
     }
-    cmd.args(["-w", "/workspace"]);
+    cmd.args(["-w", &project_root.display().to_string()]);
     cmd.arg(container);
     let entry: &[String] = if entry.is_empty() {
         static SHELL: &[String] = &[];

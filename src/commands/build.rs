@@ -6,7 +6,7 @@ use std::thread;
 use crate::docker;
 use crate::flavor::{
     build_image, build_image_streamed, image_name, image_up_to_date, list_all_flavors, nix_gid,
-    nix_uid, project_image_tag,
+    nix_uid, project_image_tag, BASE_FLAVOR,
 };
 use crate::project::{project_flavor, sbx_file};
 use crate::util::{die, log};
@@ -45,7 +45,7 @@ pub fn run(cwd: &Path, no_cache: bool, flavor_arg: Option<&str>) {
     let uid = nix_uid();
     let gid = nix_gid();
     let mut cmd = Command::new("docker");
-    cmd.env("DOCKER_BUILDKIT", "1").arg("build");
+    cmd.args(["buildx", "build", "--load"]);
     if no_cache {
         cmd.arg("--no-cache");
     }
@@ -81,9 +81,17 @@ fn build_all(no_cache: bool) {
         log("all flavors up to date (use --no-cache to force)");
         return;
     }
-    log(format!("building in parallel: {}", to_build.join(", ")));
+    let (base, leaves): (Vec<_>, Vec<_>) = to_build.into_iter().partition(|f| f == BASE_FLAVOR);
+    if !base.is_empty() {
+        log(format!("building {} first", image_name(BASE_FLAVOR)));
+        build_image(BASE_FLAVOR, no_cache);
+    }
+    if leaves.is_empty() {
+        return;
+    }
+    log(format!("building in parallel: {}", leaves.join(", ")));
     let out_lock = Arc::new(Mutex::new(()));
-    let handles: Vec<_> = to_build
+    let handles: Vec<_> = leaves
         .into_iter()
         .map(|f| {
             let lock = out_lock.clone();

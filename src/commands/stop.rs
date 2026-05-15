@@ -4,7 +4,7 @@ use std::process::Command;
 use crate::project::{project_flavor, project_name};
 use crate::service;
 use crate::util::{die, log};
-use crate::vpn::{self, sidecar_name};
+use crate::vpn::{self, project_vpn_spec, sidecar_name};
 
 pub fn run(cwd: &Path) {
     let (flavor, root) =
@@ -35,5 +35,7 @@ pub fn run(cwd: &Path) {
         let _ = Command::new("docker").args(["stop", c]).status();
     }
     service::stop_all_for_project(&pname);
-    vpn::stop_sidecar(&sidecar_name(&pname));
+    if let Some(spec) = project_vpn_spec(&root) {
+        vpn::stop_sidecar_if_idle(&sidecar_name(&spec));
+    }
 }

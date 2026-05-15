@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use crate::docker::{bridge_subnet, PortSpec};
 use crate::network::ProjectNetwork;
-use crate::project::project_name;
-use crate::util::{die, expand_tilde, home_dir, log};
+use crate::proxy;
+use crate::util::{die, expand_tilde, home_dir, log, sanitize_tag};
 
 pub fn resolve_ovpn(spec: &str) -> Option<PathBuf> {
     if spec.is_empty() {
@@ -23,8 +23,21 @@ pub fn project_vpn_spec(project_root: &Path) -> Option<String> {
     ProjectNetwork::read(project_root).vpn
 }
 
-pub fn sidecar_name(pname: &str) -> String {
-    format!("sbx-vpn-{pname}")
+pub fn sidecar_name(spec: &str) -> String {
+    format!("sbx-vpn-{}", spec_id(spec))
+}
+
+fn spec_id(spec: &str) -> String {
+    let stem = if spec.contains('/') {
+        Path::new(spec)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(spec)
+            .to_string()
+    } else {
+        spec.strip_suffix(".ovpn").unwrap_or(spec).to_string()
+    };
+    sanitize_tag(&stem)
 }
 
 pub fn sidecar_running(name: &str) -> bool {
@@ -73,8 +86,7 @@ pub fn sidecar_attached_count(sidecar: &str) -> u32 {
 }
 
 pub fn start_sidecar(spec: &str, project_root: &Path) -> String {
-    let pname = project_name(project_root);
-    let sidecar = sidecar_name(&pname);
+    let sidecar = sidecar_name(spec);
     if sidecar_running(&sidecar) {
         let attached = sidecar_attached_count(&sidecar);
         if attached > 0 {
@@ -153,6 +165,21 @@ pub fn start_sidecar(spec: &str, project_root: &Path) -> String {
         "OPENVPN_CUSTOM_CONFIG=/gluetun/custom.conf",
     ]);
     cmd.args(["-e", &format!("FIREWALL_OUTBOUND_SUBNETS={subnet}")]);
+    let hostname_ports: Vec<u16> = proxy::read_routes(project_root)
+        .iter()
+        .map(|r| r.port)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if !hostname_ports.is_empty() {
+        let joined = hostname_ports
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        cmd.args(["-e", &format!("FIREWALL_INPUT_PORTS={joined}")]);
+        log(format!("  allowing inbound on: {joined}"));
+    }
     for a in &auth_envs {
         cmd.arg(a);
     }
@@ -162,9 +189,17 @@ pub fn start_sidecar(spec: &str, project_root: &Path) -> String {
         cmd.arg(a);
     }
     cmd.arg("qmcgaw/gluetun");
-    let status = cmd.stdout(Stdio::null()).stderr(Stdio::piped()).status();
-    if status.map(|s| !s.success()).unwrap_or(true) {
-        die("failed to start vpn sidecar");
+    let output = cmd.stdout(Stdio::null()).stderr(Stdio::piped()).output();
+    match output {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            for line in stderr.lines() {
+                log(format!("  docker: {line}"));
+            }
+            die("failed to start vpn sidecar");
+        }
+        Err(e) => die(format!("failed to spawn docker: {e}")),
     }
 
     for _ in 0..30 {

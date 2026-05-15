@@ -161,7 +161,7 @@ fn cmd_status(cwd: &Path) {
         Some(p) => log(format!("  resolved: {} (MISSING)", p.display())),
         None => log("  cannot resolve (SBX_VPN_DIR not set?)"),
     }
-    let sidecar = sidecar_name(&pname);
+    let sidecar = sidecar_name(&spec);
     if sidecar_running(&sidecar) {
         let n = sidecar_attached_count(&sidecar);
         log(format!("sidecar: {sidecar} ({n} attached)"));

@@ -18,15 +18,16 @@ pub fn run(cwd: &Path, target: Target) {
     let pname = project_name(&root);
     match target {
         Target::Fs => {
+            let root_s = root.display().to_string();
             if let Some(c) = docker::find_running_container(&flavor, &pname) {
-                log(format!("trivy fs /workspace (via {c})"));
+                log(format!("trivy fs {root_s} (via {c})"));
                 let err = Command::new("docker")
-                    .args(["exec", "-i", &c, "trivy", "fs", "--no-progress", "/workspace"])
+                    .args(["exec", "-i", &c, "trivy", "fs", "--no-progress", &root_s])
                     .exec();
                 die(format!("exec: {err}"));
             }
             let image = resolve_image(&flavor, &root, false);
-            log(format!("trivy fs /workspace (transient {image})"));
+            log(format!("trivy fs {root_s} (transient {image})"));
             let uid = nix_uid();
             let gid = nix_gid();
             let err = Command::new("docker")
@@ -34,8 +35,8 @@ pub fn run(cwd: &Path, target: Target) {
                 .args(["--user", &format!("{uid}:{gid}")])
                 .args(["--cap-drop=ALL", "--security-opt=no-new-privileges"])
                 .arg("-v")
-                .arg(format!("{}:/workspace:ro", root.display()))
-                .args(["-w", "/workspace", &image, "trivy", "fs", "--no-progress", "/workspace"])
+                .arg(format!("{root_s}:{root_s}:ro"))
+                .args(["-w", &root_s, &image, "trivy", "fs", "--no-progress", &root_s])
                 .exec();
             die(format!("exec: {err}"));
         }

@@ -4,14 +4,18 @@ use crate::docker::{self, Network, PortSpec, RunSpec};
 use crate::flavor::resolve_image;
 use crate::network::ProjectNetwork;
 use crate::project::project_name;
+use crate::proxy;
 use crate::service;
 use crate::tailscale;
+use crate::util::log;
 use crate::vpn;
 
 #[derive(Default)]
 pub struct Cleanup {
     vpn_sidecar: Option<String>,
     tailscale_sidecar: Option<String>,
+    proxy_attached: bool,
+    proxy_route_project: Option<String>,
     services: Vec<String>,
     hosts_file: Option<PathBuf>,
     done: bool,
@@ -35,6 +39,13 @@ impl Cleanup {
         if let Some(sidecar) = self.vpn_sidecar.take() {
             vpn::stop_sidecar_if_idle(&sidecar);
         }
+        if let Some(name) = self.proxy_route_project.take() {
+            proxy::remove_file_route(&name);
+        }
+        if self.proxy_attached {
+            proxy::stop_sidecar_if_idle();
+            self.proxy_attached = false;
+        }
         if let Some(f) = self.hosts_file.take() {
             let _ = std::fs::remove_file(f);
         }
@@ -49,13 +60,20 @@ impl Drop for Cleanup {
 }
 
 pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32 {
+    docker::ensure_ssh_agent_ready(project_root);
     let image = resolve_image(flavor, project_root, false);
     let mut cleanup = Cleanup::new();
 
+    let routes = proxy::read_routes(project_root);
+    let net = ProjectNetwork::read(project_root);
+
     let mut publish = PortSpec::from_project(project_root);
+    if !routes.is_empty() {
+        let claimed = proxy::hostname_ports(&routes);
+        publish.ports.retain(|p| !claimed.contains(p));
+    }
     let mut netns_owner: Option<String> = None;
 
-    let net = ProjectNetwork::read(project_root);
     if let Some(spec) = &net.vpn {
         let sidecar = vpn::start_sidecar(spec, project_root);
         cleanup.vpn_sidecar = Some(sidecar.clone());
@@ -89,6 +107,7 @@ pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32
     }
 
     let mut extra_host_args: Vec<String> = Vec::new();
+    let pname = project_name(project_root);
     let network = match &netns_owner {
         Some(owner) => {
             let bridge_gw = docker::bridge_gateway();
@@ -110,9 +129,33 @@ pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32
                 extra_host_args.push(format!("{}:/etc/hosts:ro", hosts_path.display()));
                 cleanup.hosts_file = Some(hosts_path);
             }
+            if !routes.is_empty() {
+                proxy::start_sidecar();
+                cleanup.proxy_attached = true;
+                proxy::attach_container(owner);
+                proxy::write_file_route(&pname, owner, &routes);
+                cleanup.proxy_route_project = Some(pname.clone());
+                for r in &routes {
+                    log(format!("  http://{}/  ->  {owner}:{}", r.hostname, r.port));
+                }
+            }
             Network::ShareWith(owner.as_str())
         }
+        None if !routes.is_empty() => {
+            proxy::start_sidecar();
+            cleanup.proxy_attached = true;
+            for r in &routes {
+                log(format!("  http://{}/  ->  :{}", r.hostname, r.port));
+            }
+            Network::UserDefined(proxy::NETWORK)
+        }
         None => Network::Bridge,
+    };
+
+    let labels = if netns_owner.is_some() {
+        Vec::new()
+    } else {
+        proxy::labels_for(&pname, &routes)
     };
 
     let spec = RunSpec {
@@ -124,13 +167,13 @@ pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32
         use_hostname: netns_owner.is_none(),
         publish_ports: publish,
         extra_host_args,
-        host_workspace: false,
         extra_mounts: Vec::new(),
         container_home: PathBuf::from("/home/dev"),
+        labels,
+        mount_docker_socket: docker::project_docker_enabled(project_root),
     };
     let code = docker::run_container(spec);
     cleanup.run();
-    let _ = project_name(project_root);
     code
 }
 

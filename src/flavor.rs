@@ -13,7 +13,13 @@ pub fn flavor_dir(flavor: &str) -> PathBuf {
     config_dir().join(flavor)
 }
 
-pub const INTERNAL_FLAVORS: &[&str] = &["claude"];
+pub const INTERNAL_FLAVORS: &[&str] = &["base", "claude"];
+
+pub const BASE_FLAVOR: &str = "base";
+
+fn flavor_depends_on_base(flavor: &str) -> bool {
+    flavor != BASE_FLAVOR && is_flavor(BASE_FLAVOR)
+}
 
 pub fn is_internal_flavor(name: &str) -> bool {
     INTERNAL_FLAVORS.contains(&name)
@@ -61,6 +67,14 @@ pub fn project_image_tag(flavor: &str, project_root: &Path) -> String {
 
 pub fn cache_args(flavor: &str) -> Vec<String> {
     let mut out = Vec::new();
+    if flavor != "claude" {
+        out.push("-v".into());
+        out.push(format!("sbx-mise-{flavor}:/home/dev/.local/share/mise"));
+        out.push("-v".into());
+        out.push(format!(
+            "sbx-mise-state-{flavor}:/home/dev/.local/state/mise"
+        ));
+    }
     match flavor {
         "npm" => {
             out.push("-v".into());
@@ -80,24 +94,35 @@ pub fn cache_args(flavor: &str) -> Vec<String> {
             out.push("-v".into());
             out.push("sbx-maven-cache:/home/dev/.m2".into());
         }
-        "claude" => {}
+        "claude" => {
+            out.push("-v".into());
+            out.push("sbx-claude-local:/home/dev/.local".into());
+        }
         _ => {}
     }
     out
 }
 
-pub fn flavor_volumes(flavor: &str) -> Vec<&'static str> {
-    match flavor {
-        "npm" => vec!["sbx-npm-cache"],
-        "bun" => vec!["sbx-bun-cache"],
-        "rust" => vec!["sbx-rust-registry", "sbx-rust-git"],
-        "java" => vec!["sbx-maven-cache"],
-        "claude" => vec![],
+pub fn flavor_volumes(flavor: &str) -> Vec<String> {
+    let mut v: Vec<String> = match flavor {
+        "npm" => vec!["sbx-npm-cache".into()],
+        "bun" => vec!["sbx-bun-cache".into()],
+        "rust" => vec!["sbx-rust-registry".into(), "sbx-rust-git".into()],
+        "java" => vec!["sbx-maven-cache".into()],
+        "claude" => vec!["sbx-claude-local".into()],
         _ => vec![],
+    };
+    if flavor != "claude" {
+        v.push(format!("sbx-mise-{flavor}"));
+        v.push(format!("sbx-mise-state-{flavor}"));
     }
+    v
 }
 
 pub fn image_exists_or_build(flavor: &str) {
+    if flavor_depends_on_base(flavor) && !docker::image_exists(&image_name(BASE_FLAVOR)) {
+        build_image(BASE_FLAVOR, false);
+    }
     if !docker::image_exists(&image_name(flavor)) {
         build_image(flavor, false);
     }
@@ -134,7 +159,14 @@ pub fn image_up_to_date(flavor: &str) -> bool {
         Some(t) => t,
         None => return false,
     };
-    img_mt >= flavor_context_max_mtime(flavor)
+    let mut max_ctx = flavor_context_max_mtime(flavor);
+    if flavor_depends_on_base(flavor) {
+        let base_mt = flavor_context_max_mtime(BASE_FLAVOR);
+        if base_mt > max_ctx {
+            max_ctx = base_mt;
+        }
+    }
+    img_mt >= max_ctx
 }
 
 fn build_cmd(flavor: &str, no_cache: bool) -> Result<(Command, String, PathBuf), String> {
@@ -149,7 +181,11 @@ fn build_cmd(flavor: &str, no_cache: bool) -> Result<(Command, String, PathBuf),
     let uid = nix_uid();
     let gid = nix_gid();
     let mut cmd = Command::new("docker");
-    cmd.env("DOCKER_BUILDKIT", "1").arg("build");
+    cmd.args(["buildx", "build", "--load"]);
+    let builder = std::env::var("SBX_BUILDX_BUILDER").unwrap_or_else(|_| "default".into());
+    if !builder.is_empty() {
+        cmd.args(["--builder", &builder]);
+    }
     if no_cache {
         cmd.arg("--no-cache");
     }
@@ -166,6 +202,9 @@ fn build_cmd(flavor: &str, no_cache: bool) -> Result<(Command, String, PathBuf),
 }
 
 pub fn build_image(flavor: &str, no_cache: bool) {
+    if flavor_depends_on_base(flavor) && !docker::image_exists(&image_name(BASE_FLAVOR)) {
+        build_image(BASE_FLAVOR, no_cache);
+    }
     let (mut cmd, tag, ctx) = match build_cmd(flavor, no_cache) {
         Ok(v) => v,
         Err(e) => die(e),
@@ -218,6 +257,9 @@ pub fn build_image_streamed(
 }
 
 pub fn resolve_image(flavor: &str, project_root: &Path, no_cache: bool) -> String {
+    if flavor_depends_on_base(flavor) && !docker::image_exists(&image_name(BASE_FLAVOR)) {
+        build_image(BASE_FLAVOR, false);
+    }
     let base = image_name(flavor);
     if !docker::image_exists(&base) {
         build_image(flavor, false);
@@ -244,7 +286,11 @@ pub fn resolve_image(flavor: &str, project_root: &Path, no_cache: bool) -> Strin
         let uid = nix_uid();
         let gid = nix_gid();
         let mut cmd = Command::new("docker");
-        cmd.env("DOCKER_BUILDKIT", "1").arg("build");
+        cmd.args(["buildx", "build", "--load"]);
+        let builder = std::env::var("SBX_BUILDX_BUILDER").unwrap_or_else(|_| "default".into());
+        if !builder.is_empty() {
+            cmd.args(["--builder", &builder]);
+        }
         if no_cache {
             cmd.arg("--no-cache");
         }

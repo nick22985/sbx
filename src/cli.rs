@@ -104,6 +104,21 @@ fn complete_configured_port(current: &OsStr) -> Vec<CompletionCandidate> {
         .collect()
 }
 
+fn complete_configured_hostname(current: &OsStr) -> Vec<CompletionCandidate> {
+    let cur = current.to_str().unwrap_or("");
+    let Ok(cwd) = std::env::current_dir() else {
+        return Vec::new();
+    };
+    let Some((_, root)) = project_flavor(&cwd) else {
+        return Vec::new();
+    };
+    crate::proxy::read_routes(&root)
+        .into_iter()
+        .filter(|r| cur.is_empty() || fuzzy(cur, &r.hostname))
+        .map(|r| CompletionCandidate::new(r.hostname))
+        .collect()
+}
+
 fn complete_env_key(current: &OsStr) -> Vec<CompletionCandidate> {
     let cur = current.to_str().unwrap_or("");
     let path = env_file_path();
@@ -205,20 +220,10 @@ pub enum Cmd {
     List,
     #[command(alias = "ps", alias = "ls-sessions")]
     Sessions,
-    #[command(alias = "ports")]
-    Port {
+    #[command(alias = "cfg", alias = "conf")]
+    Config {
         #[command(subcommand)]
-        action: Option<PortCmd>,
-    },
-    Env {
-        #[command(subcommand)]
-        action: Option<EnvCmd>,
-    },
-    Start {
-        #[command(subcommand)]
-        action: Option<StartCmd>,
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
-        rest: Vec<String>,
+        action: Option<ConfigCmd>,
     },
     Scan {
         #[arg(value_parser = ["fs", "filesystem", "image"], default_value = "fs")]
@@ -228,14 +233,9 @@ pub enum Cmd {
         #[command(subcommand)]
         action: Option<NetCmd>,
     },
-    Ssh {
+    Proxy {
         #[command(subcommand)]
-        action: Option<SshCmd>,
-    },
-    #[command(alias = "services")]
-    Service {
-        #[command(subcommand)]
-        action: Option<ServiceCmd>,
+        action: Option<ProxyCmd>,
     },
     Completions {
         shell: clap_complete::Shell,
@@ -252,6 +252,8 @@ pub enum Cmd {
         safe: bool,
         #[arg(long = "no-rc")]
         no_rc: bool,
+        #[arg(long = "docker")]
+        docker: bool,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -295,6 +297,21 @@ pub enum PortCmd {
     Rm {
         #[arg(add = ArgValueCompleter::new(complete_configured_port))]
         port: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum HostnameCmd {
+    #[command(alias = "ls")]
+    List,
+    Add {
+        hostname: String,
+        port: String,
+    },
+    #[command(alias = "remove", alias = "del", alias = "delete")]
+    Rm {
+        #[arg(add = ArgValueCompleter::new(complete_configured_hostname))]
+        hostname: String,
     },
 }
 
@@ -380,6 +397,64 @@ pub enum SshCmd {
     #[command(alias = "disable")]
     Off,
     Status,
+}
+
+#[derive(Subcommand)]
+pub enum DockerCmd {
+    #[command(alias = "enable")]
+    On,
+    #[command(alias = "disable")]
+    Off,
+    Status,
+}
+
+#[derive(Subcommand)]
+pub enum ConfigCmd {
+    #[command(alias = "ports")]
+    Port {
+        #[command(subcommand)]
+        action: Option<PortCmd>,
+    },
+    #[command(alias = "hostnames", alias = "host")]
+    Hostname {
+        #[command(subcommand)]
+        action: Option<HostnameCmd>,
+    },
+    Env {
+        #[command(subcommand)]
+        action: Option<EnvCmd>,
+    },
+    Start {
+        #[command(subcommand)]
+        action: Option<StartCmd>,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
+        rest: Vec<String>,
+    },
+    #[command(alias = "services")]
+    Service {
+        #[command(subcommand)]
+        action: Option<ServiceCmd>,
+    },
+    Ssh {
+        #[command(subcommand)]
+        action: Option<SshCmd>,
+    },
+    Docker {
+        #[command(subcommand)]
+        action: Option<DockerCmd>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProxyCmd {
+    Status,
+    #[command(alias = "ls")]
+    Routes,
+    Logs {
+        #[arg(short = 'f', long = "follow")]
+        follow: bool,
+    },
+    Stop,
 }
 
 #[derive(Subcommand)]

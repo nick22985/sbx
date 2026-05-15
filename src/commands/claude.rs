@@ -16,7 +16,9 @@ pub fn run(
     cli_profile: Option<String>,
     safe: bool,
     no_rc: bool,
+    cli_docker: bool,
 ) -> i32 {
+    docker::ensure_ssh_agent_ready(cwd);
     image_exists_or_build(FLAVOR);
 
     let entry: Vec<String> = if shell {
@@ -45,6 +47,11 @@ pub fn run(
     let profile = resolve_profile(cwd, cli_profile.as_deref());
     let extra_host_args = build_claude_mount_args(profile.as_deref());
 
+    let mount_docker_socket = cli_docker
+        || std::env::var("SBX_DOCKER")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+
     let image = image_name(FLAVOR);
     let spec = RunSpec {
         image: &image,
@@ -55,9 +62,10 @@ pub fn run(
         use_hostname: true,
         publish_ports: PortSpec::default(),
         extra_host_args,
-        host_workspace: true,
         extra_mounts,
         container_home: home_dir(),
+        labels: Vec::new(),
+        mount_docker_socket,
     };
     docker::run_container(spec)
 }

@@ -14,9 +14,7 @@ pub fn run(flavor: Option<&str>) {
     let mut vols: Vec<String> = Vec::new();
     let mut imgs: Vec<String> = Vec::new();
     for f in &flavors {
-        for v in flavor_volumes(f) {
-            vols.push(v.to_string());
-        }
+        vols.extend(flavor_volumes(f));
         imgs.extend(images_for_flavor(f));
     }
     if vols.is_empty() && imgs.is_empty() {

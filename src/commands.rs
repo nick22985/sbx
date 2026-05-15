@@ -1,9 +1,12 @@
 pub mod build;
 pub mod claude;
 pub mod clean;
+pub mod docker;
 pub mod env;
+pub mod hostname;
 pub mod init;
 pub mod port;
+pub mod proxy;
 pub mod purge;
 pub mod run;
 pub mod scan;

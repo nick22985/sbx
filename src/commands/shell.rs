@@ -28,7 +28,7 @@ pub fn ad_hoc(cwd: &Path, flavor: &str) -> i32 {
 fn attach_or_run(flavor: &str, project_root: &Path) -> i32 {
     let pname = project_name(project_root);
     if let Some(c) = docker::find_running_container(flavor, &pname) {
-        let err = docker::exec_into(&c, &[]);
+        let err = docker::exec_into(&c, project_root, &[]);
         die(format!("exec: {err}"));
     }
     session::run_session(flavor, project_root, Vec::new())

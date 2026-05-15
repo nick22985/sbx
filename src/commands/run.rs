@@ -6,8 +6,8 @@ use crate::project::{project_flavor, project_name, sbx_file};
 use crate::util::{die, log};
 
 pub fn run(cwd: &Path) -> i32 {
-    let (flavor, root) =
-        project_flavor(cwd).unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
+    let (flavor, root) = project_flavor(cwd)
+        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
     let start = sbx_file(&root, "start");
     if !start.is_file() {
         die("no .sbx/start file. put a shell command there (e.g. 'npm run dev').");

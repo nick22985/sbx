@@ -130,7 +130,9 @@ pub fn image_exists_or_build(flavor: &str) {
 
 pub fn flavor_context_max_mtime(flavor: &str) -> u64 {
     fn walk(dir: &Path, max: &mut u64) {
-        let Ok(entries) = fs::read_dir(dir) else { return };
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
         for entry in entries.flatten() {
             let Ok(meta) = entry.metadata() else { continue };
             if meta.is_dir() {

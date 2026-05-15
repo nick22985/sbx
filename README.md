@@ -25,6 +25,12 @@ COMPLETE=fish sbx | source
 `sbx completions <shell>` also prints a static completion script if you'd
 rather check one in.
 
+Flavors live under `~/.config/sbx/<flavor>/Dockerfile`. The repo ships a
+working set in [`examples/flavors/`](examples/flavors/) — `base`, `npm`,
+`bun`, `rust`, `java`, and `claude`, with their wrapper scripts. Copy
+the ones you want into `~/.config/sbx/`, then `sbx build base` and
+`sbx build <flavor>` to bring them up.
+
 ## Project lifecycle
 
 ```
@@ -164,6 +170,8 @@ escape the sandbox. Only enable this when you trust what's running inside.
 - `./.sbx/docker`                             — touched file → mount /var/run/docker.sock
 - `./.sbx/claude-mounts`                      — extra host paths for `sbx claude`, one per line
 - `./.sbx/claude-profile`                     — pins this project to a named claude profile
+
+See [`examples/sbx/`](examples/sbx/) for an annotated example of every `.sbx/` file.
 
 In a git worktree, `.sbx/*` files are looked up in the worktree first, then
 the shared bare/primary repo, then the private overlay

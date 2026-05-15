@@ -1,0 +1,6 @@
+# Ports forwarded to 127.0.0.1 on the host. One u16 per line.
+# `#` comments and blank lines are allowed. Same port also flows through to
+# any sidecar services (postgres, redis, etc.) that share the netns.
+3000   # vite / next dev
+5173   # vite preview
+8025   # mailpit web UI

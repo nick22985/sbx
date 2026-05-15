@@ -12,8 +12,8 @@ pub enum Action<'a> {
 }
 
 pub fn run(cwd: &Path, action: Action<'_>) {
-    let (_, root) =
-        project_flavor(cwd).unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
+    let (_, root) = project_flavor(cwd)
+        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
     let read_file = sbx_file(&root, "services");
     let write_dir = sbx_write_dir(&root);
     let write_file = write_dir.join("services");

@@ -1,0 +1,9 @@
+# Presence of this file enables SSH agent forwarding for the project.
+# Content is ignored — sbx only checks that the file exists.
+#
+# When enabled, sbx mounts:
+#   - $SSH_AUTH_SOCK   (so `ssh`/`git` inside the container can sign keys)
+#   - ~/.ssh/config       (read-only)
+#   - ~/.ssh/known_hosts  (read-only)
+#
+# Toggle with: sbx config ssh on  /  sbx config ssh off

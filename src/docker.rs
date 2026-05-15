@@ -111,11 +111,7 @@ fn container_inspect_bridge(field: &str) -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 #[derive(Clone, Copy)]
@@ -346,7 +342,9 @@ pub fn ensure_ssh_agent_ready(project_root: &Path) {
             log("ssh-agent has no keys loaded");
             let prompt_ok = stdio_is_tty() && confirm("add default identities now? (ssh-add)");
             if !prompt_ok {
-                die("aborting: no keys in agent. run `ssh-add` (or `ssh-add ~/.ssh/id_…`) and retry");
+                die(
+                    "aborting: no keys in agent. run `ssh-add` (or `ssh-add ~/.ssh/id_…`) and retry",
+                );
             }
             let ran = Command::new("ssh-add").env("SSH_AUTH_SOCK", &sock).status();
             if !matches!(ran, Ok(s) if s.success()) {

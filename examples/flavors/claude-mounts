@@ -1,0 +1,5 @@
+# Global claude-mounts — host paths mounted into every `sbx claude` session.
+# One absolute path per line; `#` comments allowed. Missing paths are silently
+# skipped. Project-level .sbx/claude-mounts is layered on top of this.
+~/.m2
+~/.gradle

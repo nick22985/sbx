@@ -167,9 +167,5 @@ fn print_row(r: &Row, w: &Widths) {
 }
 
 fn dash_if_empty(s: &str) -> &str {
-    if s.is_empty() {
-        "-"
-    } else {
-        s
-    }
+    if s.is_empty() { "-" } else { s }
 }

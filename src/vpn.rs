@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use crate::docker::{bridge_subnet, PortSpec};
+use crate::docker::{PortSpec, bridge_subnet};
 use crate::network::ProjectNetwork;
 use crate::proxy;
 use crate::util::{die, expand_tilde, home_dir, log, sanitize_tag};

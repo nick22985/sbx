@@ -28,7 +28,9 @@ pub fn run(cwd: &Path, action: Action) {
                 "docker socket forwarding enabled for this project ({})",
                 write_file.display()
             ));
-            log("WARNING: mounting the host docker socket grants root-equivalent access to the host. anything in the container can break out via `docker run --privileged`.");
+            log(
+                "WARNING: mounting the host docker socket grants root-equivalent access to the host. anything in the container can break out via `docker run --privileged`.",
+            );
         }
         Action::Off => {
             let _ = fs::remove_file(&write_file);

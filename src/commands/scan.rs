@@ -13,8 +13,8 @@ pub enum Target {
 }
 
 pub fn run(cwd: &Path, target: Target) {
-    let (flavor, root) =
-        project_flavor(cwd).unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
+    let (flavor, root) = project_flavor(cwd)
+        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
     let pname = project_name(&root);
     match target {
         Target::Fs => {
@@ -36,7 +36,15 @@ pub fn run(cwd: &Path, target: Target) {
                 .args(["--cap-drop=ALL", "--security-opt=no-new-privileges"])
                 .arg("-v")
                 .arg(format!("{root_s}:{root_s}:ro"))
-                .args(["-w", &root_s, &image, "trivy", "fs", "--no-progress", &root_s])
+                .args([
+                    "-w",
+                    &root_s,
+                    &image,
+                    "trivy",
+                    "fs",
+                    "--no-progress",
+                    &root_s,
+                ])
                 .exec();
             die(format!("exec: {err}"));
         }

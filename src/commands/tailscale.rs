@@ -5,8 +5,8 @@ use crate::env_file;
 use crate::network::{self, ProjectNetwork, TailscaleConfig};
 use crate::project::{project_flavor, project_name};
 use crate::tailscale::{
-    self, authkey_env, is_valid_profile_name, sidecar_attached_count, sidecar_name,
-    sidecar_running, AUTHKEY_ENV_BASE,
+    self, AUTHKEY_ENV_BASE, authkey_env, is_valid_profile_name, sidecar_attached_count,
+    sidecar_name, sidecar_running,
 };
 use crate::util::{die, env_file_path, log};
 

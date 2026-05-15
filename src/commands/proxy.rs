@@ -217,7 +217,7 @@ fn stop() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proxy::{render_file_route_for_test, Route};
+    use crate::proxy::{Route, render_file_route_for_test};
 
     #[test]
     fn yaml_dashboard_internal_service() {

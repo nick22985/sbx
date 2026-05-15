@@ -5,8 +5,8 @@ use std::thread;
 
 use crate::docker;
 use crate::flavor::{
-    build_image, build_image_streamed, image_name, image_up_to_date, list_all_flavors, nix_gid,
-    nix_uid, project_image_tag, BASE_FLAVOR,
+    BASE_FLAVOR, build_image, build_image_streamed, image_name, image_up_to_date, list_all_flavors,
+    nix_gid, nix_uid, project_image_tag,
 };
 use crate::project::{project_flavor, sbx_file};
 use crate::util::{die, log};

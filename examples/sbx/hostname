@@ -1,0 +1,9 @@
+# Traefik routes managed by `sbx proxy`. Format: `host[/path] = port`.
+# `#` comments and blank lines allowed. The traefik sidecar listens on
+# 127.0.0.1:80 and resolves *.sbx.localhost on the host.
+app.sbx.localhost     = 3000
+api.app.sbx.localhost = 4000
+
+# Path-prefix routing — same host, different services:
+admin.sbx.localhost/        = 3000
+admin.sbx.localhost/metrics = 9090

@@ -193,10 +193,14 @@ pub fn start_sidecar(
             log(format!("tailscale sidecar up: {sidecar}"));
             return sidecar;
         }
-        if interactive && !login_url_shown && i >= 2
+        if interactive
+            && !login_url_shown
+            && i >= 2
             && let Some(url) = scan_login_url(&sidecar)
         {
-            log("tailscale needs interactive auth. Open this URL or sign in via the Tailscale app:");
+            log(
+                "tailscale needs interactive auth. Open this URL or sign in via the Tailscale app:",
+            );
             log(format!("  {url}"));
             log(format!(
                 "(waiting up to {wait_secs}s — interrupt with Ctrl-C if you want to abort)"

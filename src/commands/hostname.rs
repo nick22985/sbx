@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::project::{project_flavor, sbx_file, sbx_write_dir};
-use crate::proxy::{parse_routes, Route};
+use crate::proxy::{Route, parse_routes};
 use crate::util::{die, log};
 
 pub enum Action<'a> {

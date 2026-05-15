@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# sbx-audit — run lockfile vuln + filesystem scans against the project at CWD.
+#
+# Runs whichever scanners are installed. Designed for the workflow
+# "install normally, audit when you want to check."
+set -uo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage: sbx-audit [--osv|--trivy]
+
+With no flag, runs every available scanner against the current directory.
+
+  --osv     Run osv-scanner only (lockfile → known-vuln DB).
+  --trivy   Run trivy fs only (source + lockfiles + secrets).
+
+Tools must be on PATH; missing tools are skipped silently. Use `socket`
+and `guarddog` directly for socket.dev / package-specific scans.
+EOF
+}
+
+run_osv() {
+    command -v osv-scanner >/dev/null 2>&1 || return 0
+    printf '==> osv-scanner --recursive .\n'
+    osv-scanner --recursive .
+}
+
+run_trivy() {
+    command -v trivy >/dev/null 2>&1 || return 0
+    printf '==> trivy fs .\n'
+    trivy fs .
+}
+
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+    --osv)     run_osv ;;
+    --trivy)   run_trivy ;;
+    "")        run_osv; run_trivy ;;
+    *)         usage; exit 2 ;;
+esac

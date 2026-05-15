@@ -1,0 +1,20 @@
+#!/bin/sh
+# sbx claude container entrypoint.
+#
+# On first run inside the user's mounted ~/.claude, runs `graphify install`
+# to register the slash command + PreToolUse hook with Claude Code. The
+# marker file makes subsequent runs a no-op.
+set -eu
+
+MARKER="${HOME}/.claude/.sbx-graphify-installed"
+
+if [ ! -e "$MARKER" ] && command -v graphify >/dev/null 2>&1; then
+    printf 'sbx: first-run graphify install (~/.claude)...\n' >&2
+    if graphify install; then
+        : > "$MARKER" || true
+    else
+        printf 'sbx: graphify install failed; will retry on next start\n' >&2
+    fi
+fi
+
+exec "$@"

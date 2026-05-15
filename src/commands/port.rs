@@ -11,8 +11,8 @@ pub enum Action<'a> {
 }
 
 pub fn run(cwd: &Path, action: Action<'_>) {
-    let (_, root) =
-        project_flavor(cwd).unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
+    let (_, root) = project_flavor(cwd)
+        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
     let read_file = sbx_file(&root, "ports");
     let write_dir = sbx_write_dir(&root);
     let write_file = write_dir.join("ports");
@@ -37,10 +37,18 @@ pub fn run(cwd: &Path, action: Action<'_>) {
             fs::create_dir_all(&write_dir).ok();
             let mut content = fs::read_to_string(&write_file).unwrap_or_default();
             for line in content.lines() {
-                let cleaned: String =
-                    line.split('#').next().unwrap_or("").chars().filter(|c| !c.is_whitespace()).collect();
+                let cleaned: String = line
+                    .split('#')
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
                 if cleaned == p {
-                    log(format!("port {p} already present in {}", write_file.display()));
+                    log(format!(
+                        "port {p} already present in {}",
+                        write_file.display()
+                    ));
                     return;
                 }
             }

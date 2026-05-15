@@ -2,8 +2,8 @@ use clap::{CommandFactory, Parser};
 use std::io;
 
 use sbx::cli::{
-    ClaudeCmd, Cli, Cmd, ConfigCmd, DockerCmd, EnvCmd, HostnameCmd, NetCmd, PortCmd, ProfileCmd, ProxyCmd,
-    ServiceCmd, SshCmd, StartCmd, TailscaleCmd, VpnCmd,
+    ClaudeCmd, Cli, Cmd, ConfigCmd, DockerCmd, EnvCmd, HostnameCmd, NetCmd, PortCmd, ProfileCmd,
+    ProxyCmd, ServiceCmd, SshCmd, StartCmd, TailscaleCmd, VpnCmd,
 };
 use sbx::commands;
 use sbx::env_file;

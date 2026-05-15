@@ -12,8 +12,8 @@ pub enum Action {
 }
 
 pub fn run(cwd: &Path, action: Action) {
-    let (_, root) =
-        project_flavor(cwd).unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
+    let (_, root) = project_flavor(cwd)
+        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
     let write_dir = sbx_write_dir(&root);
     let write_file = write_dir.join("ssh");
     match action {
@@ -28,7 +28,9 @@ pub fn run(cwd: &Path, action: Action) {
                 "ssh agent forwarding enabled for this project ({})",
                 write_file.display()
             ));
-            log("next container start will mount $SSH_AUTH_SOCK + ~/.ssh/{config,known_hosts} (ro)");
+            log(
+                "next container start will mount $SSH_AUTH_SOCK + ~/.ssh/{config,known_hosts} (ro)",
+            );
         }
         Action::Off => {
             let _ = fs::remove_file(&write_file);

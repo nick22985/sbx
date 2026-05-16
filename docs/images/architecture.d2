@@ -1,0 +1,120 @@
+direction: down
+
+# Render with the wrapper script:
+#   bash docs/images/render.sh
+# (produces architecture-light.svg and architecture-dark.svg)
+
+# ──────────────────────────────────────────────────────────────────────────
+# sbx network model — canonical overview
+#
+# 1. One Linux network namespace is shared by up to five containers.
+#    Whichever is present first "owns" the netns; the rest join via
+#    `docker --network container:<owner>`. Order matches src/commands/session.rs:
+#      vpn  →  tailscale  →  first .sbx/service  →  tunnel sidecar  →  sbx-container
+#
+# 2. `sbx-proxy-net` is a *separate* Docker network (a bridge). The two
+#    long-lived shared sidecars — sbx-proxy (Traefik) and sbx-public
+#    (cloudflared) — live there permanently. When a project has HTTP routes,
+#    the netns owner is also attached to this bridge so Traefik can reach
+#    services running in the sandbox.
+#
+# 3. `sbx-host-proxy` (tinyproxy) is *not* on sbx-proxy-net. The sandbox
+#    talks to it via `host.docker.internal` over the default bridge, only
+#    when the project opts in via `.sbx/host-proxy`.
+# ──────────────────────────────────────────────────────────────────────────
+
+# Palette — render.sh rewrites this block for the dark variant.
+# PALETTE-START
+vars: {
+  netns-fill:        "#fff7ed"
+  netns-stroke:      "#c2410c"
+  netns-text:        "#7c2d12"
+  netns-accent-fill: "#fef3c7"
+  proxy-fill:        "#eff6ff"
+  proxy-stroke:      "#1d4ed8"
+  proxy-text:        "#1e3a8a"
+  host-fill:         "#fdf4ff"
+  host-stroke:       "#a21caf"
+  host-text:         "#701a75"
+  edge-proxy:        "#1d4ed8"
+  edge-proxy-text:   "#1e3a8a"
+  edge-host:         "#a21caf"
+  edge-host-text:    "#701a75"
+}
+# PALETTE-END
+
+netns: "Shared network namespace" {
+  direction: down
+  style: {
+    fill: ${netns-fill}
+    stroke: ${netns-stroke}
+    stroke-width: 2
+    stroke-dash: 4
+    border-radius: 12
+    font-color: ${netns-text}
+  }
+
+  hint: |md
+    First present owns the netns.
+    Others join via `--network container:<owner>`.
+  | {
+    shape: text
+    style.font-size: 13
+    style.italic: true
+    style.font-color: ${netns-text}
+  }
+
+  vpn:       "vpn sidecar (gluetun)"
+  tailscale: "tailscale sidecar"
+  service:   "first service\n(from .sbx/services)"
+  tunnel:    "tunnel sidecar\n(socat: in: / via:)"
+  sbx:       "sbx-container (sandbox)" {
+    style.bold: true
+    style.fill: ${netns-accent-fill}
+  }
+
+  vpn -> tailscale: { style.opacity: 0 }
+  tailscale -> service: { style.opacity: 0 }
+  service -> tunnel: { style.opacity: 0 }
+  tunnel -> sbx: { style.opacity: 0 }
+}
+
+proxynet: "Docker bridge: sbx-proxy-net" {
+  direction: down
+  style: {
+    fill: ${proxy-fill}
+    stroke: ${proxy-stroke}
+    stroke-width: 2
+    border-radius: 12
+    font-color: ${proxy-text}
+  }
+
+  proxy:  "sbx-proxy (Traefik)\n*.sbx.localhost\n+ ACME / mkcert TLS"
+  public: "sbx-public (cloudflared)\npublic.example.com\n→ Cloudflare Tunnel edge"
+
+  proxy -> public: { style.opacity: 0 }
+}
+
+hostproxy: "sbx-host-proxy (tinyproxy)\nreached at host.docker.internal:8888" {
+  style: {
+    fill: ${host-fill}
+    stroke: ${host-stroke}
+    stroke-width: 2
+    border-radius: 12
+    font-color: ${host-text}
+  }
+}
+
+netns -> proxynet: "netns owner attached\nwhen project has HTTP routes" {
+  style.stroke: ${edge-proxy}
+  style.stroke-width: 2
+  style.font-color: ${edge-proxy-text}
+  style.bold: true
+}
+
+netns.sbx -> hostproxy: "HTTPS_PROXY env\n(if .sbx/host-proxy is set)" {
+  style.stroke: ${edge-host}
+  style.stroke-dash: 5
+  style.font-color: ${edge-host-text}
+  style.bold: true
+}

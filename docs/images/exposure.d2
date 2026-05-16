@@ -1,0 +1,176 @@
+direction: down
+
+# Render with the wrapper script:
+#   bash docs/images/render.sh
+
+# ──────────────────────────────────────────────────────────────────────────
+# How a request lands in the sandbox, by scope.
+#
+#   HTTP    : browser → 127.0.0.1:80  → Traefik (sbx-proxy) → sandbox
+#   HTTPS   : browser → 127.0.0.1:443 → Traefik (TLS terminates) → sandbox
+#   Public  : browser → CF edge → CF Tunnel (outbound QUIC from cloudflared)
+#             → sbx-public (cloudflared) → sbx-proxy:80 → Traefik → sandbox
+#
+# All three paths funnel into the same Traefik (sbx-proxy) sidecar; the
+# differences are everything in front of it.
+# ──────────────────────────────────────────────────────────────────────────
+
+# PALETTE-START
+vars: {
+  client-fill:    "#f8fafc"
+  client-stroke:  "#64748b"
+  client-text:    "#0f172a"
+  cf-fill:        "#fff7ed"
+  cf-stroke:      "#ea580c"
+  cf-text:        "#7c2d12"
+  proxy-fill:     "#eff6ff"
+  proxy-stroke:   "#1d4ed8"
+  proxy-text:     "#1e3a8a"
+  sandbox-fill:   "#ecfdf5"
+  sandbox-stroke: "#059669"
+  sandbox-text:   "#064e3b"
+  group-stroke:   "#94a3b8"
+  group-text:     "#475569"
+  arrow:          "#475569"
+  arrow-tls:      "#1d4ed8"
+  arrow-tunnel:   "#ea580c"
+}
+# PALETTE-END
+
+http: "Local plain HTTP    http://app.sbx.localhost/" {
+  direction: right
+  style: {
+    stroke: ${group-stroke}
+    stroke-dash: 4
+    fill: transparent
+    font-color: ${group-text}
+    border-radius: 10
+  }
+
+  browser1: "Browser" {
+    shape: person
+    style.fill: ${client-fill}
+    style.stroke: ${client-stroke}
+    style.font-color: ${client-text}
+  }
+  proxy1: "sbx-proxy (Traefik)\n127.0.0.1:80" {
+    style.fill: ${proxy-fill}
+    style.stroke: ${proxy-stroke}
+    style.font-color: ${proxy-text}
+  }
+  sandbox1: "sandbox\n:8080" {
+    style.fill: ${sandbox-fill}
+    style.stroke: ${sandbox-stroke}
+    style.font-color: ${sandbox-text}
+  }
+
+  browser1 -> proxy1: "HTTP" {
+    style.stroke: ${arrow}
+    style.font-color: ${group-text}
+    style.bold: true
+  }
+  proxy1 -> sandbox1: "HTTP\n(routed by Host header)" {
+    style.stroke: ${arrow}
+    style.font-color: ${group-text}
+    style.bold: true
+  }
+}
+
+https: "Local HTTPS    https://app.sbx.localhost/    or    https://app.local.example.com/" {
+  direction: right
+  style: {
+    stroke: ${group-stroke}
+    stroke-dash: 4
+    fill: transparent
+    font-color: ${group-text}
+    border-radius: 10
+  }
+
+  browser2: "Browser" {
+    shape: person
+    style.fill: ${client-fill}
+    style.stroke: ${client-stroke}
+    style.font-color: ${client-text}
+  }
+  proxy2: "sbx-proxy (Traefik)\n127.0.0.1:443\nTLS terminated here\n(mkcert CA  or  Let's Encrypt)" {
+    style.fill: ${proxy-fill}
+    style.stroke: ${proxy-stroke}
+    style.font-color: ${proxy-text}
+  }
+  sandbox2: "sandbox\n:8080" {
+    style.fill: ${sandbox-fill}
+    style.stroke: ${sandbox-stroke}
+    style.font-color: ${sandbox-text}
+  }
+
+  browser2 -> proxy2: "HTTPS / TLS" {
+    style.stroke: ${arrow-tls}
+    style.font-color: ${proxy-text}
+    style.bold: true
+  }
+  proxy2 -> sandbox2: "HTTP\n(plain inside the host)" {
+    style.stroke: ${arrow}
+    style.font-color: ${group-text}
+    style.bold: true
+  }
+}
+
+public: "Public via Cloudflare Tunnel    https://app.example.com/" {
+  direction: right
+  style: {
+    stroke: ${group-stroke}
+    stroke-dash: 4
+    fill: transparent
+    font-color: ${group-text}
+    border-radius: 10
+  }
+
+  browser3: "Browser" {
+    shape: person
+    style.fill: ${client-fill}
+    style.stroke: ${client-stroke}
+    style.font-color: ${client-text}
+  }
+  cfedge: "Cloudflare edge\n(global anycast)" {
+    shape: cloud
+    style.fill: ${cf-fill}
+    style.stroke: ${cf-stroke}
+    style.font-color: ${cf-text}
+  }
+  cfd: "sbx-public\n(cloudflared)" {
+    style.fill: ${proxy-fill}
+    style.stroke: ${proxy-stroke}
+    style.font-color: ${proxy-text}
+  }
+  proxy3: "sbx-proxy (Traefik)\nsbx-proxy:80" {
+    style.fill: ${proxy-fill}
+    style.stroke: ${proxy-stroke}
+    style.font-color: ${proxy-text}
+  }
+  sandbox3: "sandbox\n:8080" {
+    style.fill: ${sandbox-fill}
+    style.stroke: ${sandbox-stroke}
+    style.font-color: ${sandbox-text}
+  }
+
+  browser3 -> cfedge: "HTTPS / TLS\n(CF edge cert)" {
+    style.stroke: ${arrow-tls}
+    style.font-color: ${proxy-text}
+    style.bold: true
+  }
+  cfedge -> cfd: "outbound QUIC tunnel\n(cloudflared dials CF, no inbound ports)" {
+    style.stroke: ${arrow-tunnel}
+    style.font-color: ${cf-text}
+    style.bold: true
+  }
+  cfd -> proxy3: "HTTP\n(on sbx-proxy-net)" {
+    style.stroke: ${arrow}
+    style.font-color: ${group-text}
+    style.bold: true
+  }
+  proxy3 -> sandbox3: "HTTP\n(routed by Host header)" {
+    style.stroke: ${arrow}
+    style.font-color: ${group-text}
+    style.bold: true
+  }
+}

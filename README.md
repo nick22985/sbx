@@ -6,6 +6,8 @@ into a container with your repo bind-mounted at the same path it lives at
 on the host. Single Rust binary; dynamic shell completions via
 `clap_complete`.
 
+<img alt="sbx demo: cd into a project, sbx init bun, sbx config port add 3000, sbx run, dev server up — one command to a working sandbox." src="docs/images/hero.gif">
+
 ## Why
 
 Modern dev environments are full of code you didn't write and don't audit:
@@ -35,8 +37,6 @@ sidecar so per-project secrets stay per-project.
 
 It's not a security boundary as strong as a VM, but it's a meaningful
 default-deny for the day-to-day "I just ran `npm install`" risks.
-
-<img alt="sbx demo: cd into a project, sbx init bun, sbx config port add 3000, sbx run, dev server up — one command to a working sandbox." src="docs/images/hero.gif">
 
 ## Quick start
 

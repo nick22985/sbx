@@ -67,7 +67,9 @@ pub fn parse(contents: &str) -> Vec<Tunnel> {
         let lhs = lhs.trim();
         let rhs = rhs.trim();
         let Ok(left) = lhs.parse::<u16>() else {
-            log(format!("ignoring invalid left port in .sbx/tunnels: {line}"));
+            log(format!(
+                "ignoring invalid left port in .sbx/tunnels: {line}"
+            ));
             continue;
         };
         if rhs.is_empty() {
@@ -229,7 +231,12 @@ pub fn start_sidecar(
         log(format!("  attaching to netns of: {n}"));
     }
     for t in tunnels {
-        log(format!("  {} {} = {}", t.direction.as_str(), t.left, t.right));
+        log(format!(
+            "  {} {} = {}",
+            t.direction.as_str(),
+            t.left,
+            t.right
+        ));
     }
 
     let mut cmd = Command::new("docker");
@@ -443,7 +450,12 @@ fn resolve_owner_ip(netns_owner: &str) -> Option<String> {
     }
     // Diagnostic dump on final failure.
     if let Ok(out) = Command::new("docker")
-        .args(["inspect", netns_owner, "--format", "{{json .NetworkSettings}}"])
+        .args([
+            "inspect",
+            netns_owner,
+            "--format",
+            "{{json .NetworkSettings}}",
+        ])
         .output()
     {
         log(format!(

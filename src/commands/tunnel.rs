@@ -128,7 +128,11 @@ fn tunnel_state(
     match t.direction {
         Direction::Out => {
             let hp = t.right.parse::<u16>().unwrap_or(t.left);
-            if published.contains(&hp) { "active" } else { "down" }
+            if published.contains(&hp) {
+                "active"
+            } else {
+                "down"
+            }
         }
         Direction::In => {
             if sidecar_listening.contains(&t.left) {

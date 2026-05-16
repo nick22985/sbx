@@ -270,8 +270,7 @@ mod tests {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let pid = std::process::id();
-        let path =
-            std::env::temp_dir().join(format!("sbx-test-{label}-{pid}-{nanos}"));
+        let path = std::env::temp_dir().join(format!("sbx-test-{label}-{pid}-{nanos}"));
         std::fs::create_dir_all(&path).unwrap();
         path
     }
@@ -287,7 +286,12 @@ mod tests {
             .env("GIT_COMMITTER_EMAIL", "t@t")
             .output()
             .unwrap();
-        assert!(status.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&status.stderr));
+        assert!(
+            status.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&status.stderr)
+        );
     }
 
     fn make_repo_with_worktree(label: &str) -> (PathBuf, PathBuf, PathBuf) {

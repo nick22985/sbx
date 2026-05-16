@@ -164,7 +164,9 @@ pub fn start_sidecar() -> Result<(), String> {
     if sidecar_exists() {
         force_stop();
     }
-    log(format!("starting host-proxy sidecar: {SIDECAR} (tinyproxy on :{PORT})"));
+    log(format!(
+        "starting host-proxy sidecar: {SIDECAR} (tinyproxy on :{PORT})"
+    ));
     let mut cmd = Command::new("docker");
     cmd.args([
         "run",
@@ -233,13 +235,7 @@ pub fn stop_sidecar_if_idle() {
 
 fn any_running_sandbox_needs_proxy() -> bool {
     let Ok(out) = Command::new("docker")
-        .args([
-            "ps",
-            "--filter",
-            "name=^sbx-",
-            "--format",
-            "{{.Names}}",
-        ])
+        .args(["ps", "--filter", "name=^sbx-", "--format", "{{.Names}}"])
         .output()
     else {
         return false;
@@ -250,7 +246,12 @@ fn any_running_sandbox_needs_proxy() -> bool {
             continue;
         }
         let envs = Command::new("docker")
-            .args(["inspect", "--format", "{{range .Config.Env}}{{.}}\n{{end}}", n])
+            .args([
+                "inspect",
+                "--format",
+                "{{range .Config.Env}}{{.}}\n{{end}}",
+                n,
+            ])
             .output();
         if let Ok(o) = envs {
             for line in String::from_utf8_lossy(&o.stdout).lines() {
@@ -314,8 +315,7 @@ pub fn remove_allowed_host(project_root: &Path, host: &str) -> Result<bool, Stri
 
 fn write_marker_file(path: &Path, hosts: &[String]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("create {}: {e}", parent.display()))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }
     let body: String = hosts.iter().map(|h| format!("{h}\n")).collect();
     std::fs::write(path, body).map_err(|e| format!("write {}: {e}", path.display()))
@@ -368,7 +368,10 @@ mod tests {
 
     #[test]
     fn regex_escapes_dots_and_anchors() {
-        assert_eq!(hostname_to_regex("repo.example.com"), r"^repo\.example\.com$");
+        assert_eq!(
+            hostname_to_regex("repo.example.com"),
+            r"^repo\.example\.com$"
+        );
     }
 
     #[test]

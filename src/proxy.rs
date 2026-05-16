@@ -74,7 +74,11 @@ fn route_tls(r: &Route, state: &TlsState) -> RouteTls {
         return RouteTls::None;
     }
     if is_local_hostname(&r.hostname) {
-        if state.local { RouteTls::Local } else { RouteTls::None }
+        if state.local {
+            RouteTls::Local
+        } else {
+            RouteTls::None
+        }
     } else if state.acme {
         RouteTls::Acme
     } else {
@@ -459,10 +463,7 @@ pub fn start_sidecar() {
             acme_dir().join("acme.json").display()
         ));
     }
-    let status = cmd
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output();
+    let status = cmd.stdout(Stdio::null()).stderr(Stdio::piped()).output();
     match status {
         Ok(o) if o.status.success() => {}
         Ok(o) => {
@@ -804,7 +805,12 @@ mod tests {
             .env("GIT_COMMITTER_EMAIL", "t@t")
             .output()
             .unwrap();
-        assert!(out.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "git {:?}: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     fn make_repo_with_worktree(label: &str) -> (PathBuf, PathBuf) {
@@ -822,7 +828,10 @@ mod tests {
         run_git(&main, &["add", "."]);
         run_git(&main, &["commit", "-q", "-m", "init"]);
         let wt = root.join("myapp-wt");
-        run_git(&main, &["worktree", "add", "-b", "live", wt.to_str().unwrap()]);
+        run_git(
+            &main,
+            &["worktree", "add", "-b", "live", wt.to_str().unwrap()],
+        );
         // Pin the worktree's port offset to 0 so tests that aren't about
         // port-offset behavior see unshifted ports. Dedicated tests below
         // override this file to exercise the offset path.

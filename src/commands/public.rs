@@ -74,7 +74,10 @@ fn add(cwd: &Path, host: &str, port: &str) {
     if let Err(e) = fs::write(&write_file, content) {
         die(format!("write {}: {e}", write_file.display()));
     }
-    log(format!("added {host} -> :{port} in {}", write_file.display()));
+    log(format!(
+        "added {host} -> :{port} in {}",
+        write_file.display()
+    ));
 }
 
 fn remove(cwd: &Path, host: &str) {
@@ -129,7 +132,10 @@ fn status(cwd: &Path) {
     );
 
     let merged = public::merged_hostnames();
-    println!("merged:    {} hostname(s) across active sessions", merged.len());
+    println!(
+        "merged:    {} hostname(s) across active sessions",
+        merged.len()
+    );
     for h in &merged {
         println!("  - {h}");
     }

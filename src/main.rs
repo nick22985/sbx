@@ -91,7 +91,9 @@ fn main() {
                 HostProxyCmd::On => commands::host_proxy::Action::On,
                 HostProxyCmd::Off => commands::host_proxy::Action::Off,
                 HostProxyCmd::Status => commands::host_proxy::Action::Status,
-                HostProxyCmd::Logs { follow } => commands::host_proxy::Action::Logs { follow: *follow },
+                HostProxyCmd::Logs { follow } => {
+                    commands::host_proxy::Action::Logs { follow: *follow }
+                }
                 HostProxyCmd::Stop => commands::host_proxy::Action::Stop,
                 HostProxyCmd::Allow { host } => commands::host_proxy::Action::Allow(host),
                 HostProxyCmd::Disallow { host } => commands::host_proxy::Action::Disallow(host),
@@ -218,10 +220,9 @@ fn dispatch_config(action: Option<ConfigCmd>) {
                     left,
                     right,
                 },
-                TunnelCmd::Rm { direction, left } => commands::tunnel::Action::Remove {
-                    direction,
-                    left,
-                },
+                TunnelCmd::Rm { direction, left } => {
+                    commands::tunnel::Action::Remove { direction, left }
+                }
             };
             commands::tunnel::run(&cwd(), act);
         }

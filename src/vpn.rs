@@ -163,7 +163,10 @@ pub fn start_sidecar(
         }
     }
     let outbound_joined = outbound.join(",");
-    cmd.args(["-e", &format!("FIREWALL_OUTBOUND_SUBNETS={outbound_joined}")]);
+    cmd.args([
+        "-e",
+        &format!("FIREWALL_OUTBOUND_SUBNETS={outbound_joined}"),
+    ]);
     if outbound.len() > 1 {
         log(format!("  outbound subnets: {outbound_joined}"));
     }

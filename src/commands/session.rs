@@ -95,7 +95,10 @@ pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32
     let mut routes = proxy::read_routes(project_root);
     let public_routes = public::read_public(project_root);
     for pr in &public_routes {
-        if !routes.iter().any(|r| r.hostname == pr.hostname && r.path.is_none()) {
+        if !routes
+            .iter()
+            .any(|r| r.hostname == pr.hostname && r.path.is_none())
+        {
             routes.push(proxy::Route {
                 hostname: pr.hostname.clone(),
                 path: None,
@@ -178,12 +181,7 @@ pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32
             tun_publish.extend(tunnel_publish.iter().cloned());
             publish = PortSpec::default();
         }
-        let t = tunnel::start_sidecar(
-            project_root,
-            &tunnels,
-            netns_owner.as_deref(),
-            &tun_publish,
-        );
+        let t = tunnel::start_sidecar(project_root, &tunnels, netns_owner.as_deref(), &tun_publish);
         if !t.is_empty() {
             cleanup.tunnel_sidecar = Some(t.clone());
             if netns_owner.is_none() {
@@ -293,8 +291,7 @@ pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32
                 log(format!("public: {e}"));
             }
         }
-        let hostnames: Vec<String> =
-            public_routes.iter().map(|r| r.hostname.clone()).collect();
+        let hostnames: Vec<String> = public_routes.iter().map(|r| r.hostname.clone()).collect();
         if let Err(e) = public::write_project_fragment(&pname, &hostnames) {
             log(format!("public: {e}"));
         } else {
@@ -317,8 +314,7 @@ pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32
         .filter(|r| !public_routes.iter().any(|p| p.hostname == r.hostname))
         .map(|r| r.hostname.clone())
         .collect();
-    let public_hosts: Vec<String> =
-        public_routes.iter().map(|r| r.hostname.clone()).collect();
+    let public_hosts: Vec<String> = public_routes.iter().map(|r| r.hostname.clone()).collect();
     let mut extra_env: Vec<(String, String)> = vec![
         ("SBX_PROJECT".into(), pname.clone()),
         ("SBX_PROJECT_BASE".into(), project_base_name(project_root)),
@@ -342,7 +338,10 @@ pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32
             ));
         }
     }
-    let primary_host = public_hosts.first().or_else(|| local_hosts.first()).cloned();
+    let primary_host = public_hosts
+        .first()
+        .or_else(|| local_hosts.first())
+        .cloned();
     let all_hosts: Vec<String> = public_hosts
         .iter()
         .chain(local_hosts.iter())

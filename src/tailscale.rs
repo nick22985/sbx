@@ -2,7 +2,6 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use crate::docker::PortSpec;
 use crate::project::project_name;
 use crate::util::{die, log};
 
@@ -70,28 +69,14 @@ fn container_exists(name: &str, include_stopped: bool) -> bool {
 }
 
 pub fn sidecar_attached_count(sidecar: &str) -> u32 {
-    let Ok(out) = Command::new("docker")
-        .args([
-            "ps",
-            "--filter",
-            &format!("network=container:{sidecar}"),
-            "--format",
-            "{{.Names}}",
-        ])
-        .output()
-    else {
-        return 0;
-    };
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .count() as u32
+    crate::docker::netns_attached_count(sidecar)
 }
 
 pub fn start_sidecar(
     project_root: &Path,
     share_netns: Option<&str>,
     profile: Option<&str>,
+    publish_args: &[String],
 ) -> String {
     let pname = project_name(project_root);
     let sidecar = sidecar_name(&pname, profile);
@@ -125,11 +110,6 @@ pub fn start_sidecar(
         Some(p) => format!("sbx-{pname}-{p}"),
     };
     let state = state_volume(&pname, profile);
-    let ports = if share_netns.is_none() {
-        PortSpec::from_project(project_root).to_docker_args()
-    } else {
-        Vec::new()
-    };
 
     log(format!("starting tailscale sidecar: {sidecar}"));
     if let Some(n) = share_netns {
@@ -161,9 +141,9 @@ pub fn start_sidecar(
         cmd.args(["--network", &format!("container:{owner}")]);
     } else {
         cmd.arg("--add-host=host.docker.internal:host-gateway");
-    }
-    for a in ports {
-        cmd.arg(a);
+        for a in publish_args {
+            cmd.arg(a);
+        }
     }
     cmd.arg(IMAGE);
     let status = cmd.stdout(Stdio::null()).stderr(Stdio::piped()).status();

@@ -88,6 +88,115 @@ pub fn find_running_container(flavor: &str, pname: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+pub fn container_exists(name: &str, include_stopped: bool) -> bool {
+    let mut cmd = Command::new("docker");
+    cmd.arg("ps");
+    if include_stopped {
+        cmd.arg("-a");
+    }
+    cmd.args([
+        "--filter",
+        &format!("name=^{name}$"),
+        "--format",
+        "{{.Names}}",
+    ]);
+    let Ok(out) = cmd.output() else {
+        return false;
+    };
+    !String::from_utf8_lossy(&out.stdout).trim().is_empty()
+}
+
+pub fn force_rm(name: &str) {
+    let _ = Command::new("docker")
+        .args(["rm", "-f", name])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// Returns true if a container with the given name existed and was removed,
+/// false if it was already absent.
+pub fn stop_if_present(name: &str) -> bool {
+    if !container_exists(name, true) {
+        return false;
+    }
+    force_rm(name);
+    true
+}
+
+/// Human-readable one-liner: "running (NAME)" / "stopped (NAME)" / "not present (NAME)".
+pub fn state_line(name: &str) -> String {
+    if container_exists(name, false) {
+        format!("running ({name})")
+    } else if container_exists(name, true) {
+        format!("stopped ({name})")
+    } else {
+        format!("not present ({name})")
+    }
+}
+
+pub fn tail_logs(name: &str, follow: bool) {
+    let mut cmd = Command::new("docker");
+    cmd.arg("logs");
+    if follow {
+        cmd.arg("-f");
+    } else {
+        cmd.args(["--tail", "200"]);
+    }
+    cmd.arg(name);
+    let _ = cmd.status();
+}
+
+/// Count running containers sharing the given sidecar's network namespace
+/// (i.e. started with `--network=container:<sidecar>`).
+///
+/// `docker ps --filter network=container:NAME` does not work — Docker's
+/// network filter doesn't honor the `container:` syntax. We have to inspect
+/// each running container's `HostConfig.NetworkMode` and match against the
+/// sidecar's resolved container ID.
+pub fn netns_attached_count(sidecar: &str) -> u32 {
+    let Some(id) = container_id(sidecar) else {
+        return 0;
+    };
+    let target = format!("container:{id}");
+    let Ok(out) = Command::new("docker").args(["ps", "-q"]).output() else {
+        return 0;
+    };
+    let ids: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if ids.is_empty() {
+        return 0;
+    }
+    let mut args: Vec<String> = vec![
+        "inspect".into(),
+        "--format".into(),
+        "{{.HostConfig.NetworkMode}}".into(),
+    ];
+    args.extend(ids);
+    let Ok(out) = Command::new("docker").args(&args).output() else {
+        return 0;
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| l.trim() == target)
+        .count() as u32
+}
+
+fn container_id(name: &str) -> Option<String> {
+    let out = Command::new("docker")
+        .args(["inspect", "--format", "{{.Id}}", name])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() { None } else { Some(s) }
+}
+
 pub fn bridge_subnet() -> String {
     container_inspect_bridge("Subnet").unwrap_or_else(|| "172.17.0.0/16".to_string())
 }
@@ -403,10 +512,11 @@ pub struct RunSpec<'a> {
     pub use_hostname: bool,
     pub publish_ports: PortSpec,
     pub extra_host_args: Vec<String>,
-    pub extra_mounts: Vec<PathBuf>,
+    pub extra_mounts: Vec<crate::mounts::Mount>,
     pub container_home: PathBuf,
     pub labels: Vec<String>,
     pub mount_docker_socket: bool,
+    pub extra_env: Vec<(String, String)>,
 }
 
 pub fn run_container(spec: RunSpec<'_>) -> i32 {
@@ -459,6 +569,9 @@ pub fn run_container(spec: RunSpec<'_>) -> i32 {
     cmd.args(["-w", &workspace]);
     cmd.arg("-v").arg(format!("{workspace}:{workspace}"));
     cmd.args(["-e", &format!("SBX_PROJECT_DIR={workspace}")]);
+    for (k, v) in &spec.extra_env {
+        cmd.args(["-e", &format!("{k}={v}")]);
+    }
     for arg in worktree_mount_args(spec.project_root) {
         cmd.arg(arg);
     }
@@ -470,20 +583,53 @@ pub fn run_container(spec: RunSpec<'_>) -> i32 {
             cmd.arg(arg);
         }
     }
-    for path in &spec.extra_mounts {
-        if !path.is_dir() {
+    for m in &spec.extra_mounts {
+        if !m.host.exists() {
             log(format!(
-                "skipping extra mount (not a directory): {}",
-                path.display()
+                "skipping extra mount (host path missing): {}",
+                m.host.display()
             ));
             continue;
         }
-        let p = path.display().to_string();
-        log(format!("mounting extra path: {p}"));
-        cmd.arg("-v").arg(format!("{p}:{p}"));
+        let host = m.host.display();
+        let container = m.container.display();
+        log(format!("mounting extra path: {host} -> {container}"));
+        let spec = if m.ro {
+            format!("{host}:{container}:ro")
+        } else {
+            format!("{host}:{container}")
+        };
+        cmd.arg("-v").arg(spec);
     }
-    for arg in crate::flavor::cache_args(spec.flavor) {
-        cmd.arg(arg);
+    let user_mount_targets: std::collections::BTreeSet<PathBuf> = spec
+        .extra_mounts
+        .iter()
+        .map(|m| m.container.clone())
+        .collect();
+    let cache = crate::flavor::cache_args(spec.flavor);
+    let mut i = 0;
+    while i < cache.len() {
+        if cache[i] == "-v"
+            && let Some(vol) = cache.get(i + 1)
+        {
+            let target = vol.splitn(3, ':').nth(1).map(PathBuf::from);
+            if let Some(t) = target
+                && user_mount_targets.contains(&t)
+            {
+                log(format!(
+                    "skipping default cache volume for {} (overridden by user mount)",
+                    t.display()
+                ));
+                i += 2;
+                continue;
+            }
+            cmd.arg(&cache[i]);
+            cmd.arg(vol);
+            i += 2;
+        } else {
+            cmd.arg(&cache[i]);
+            i += 1;
+        }
     }
     for arg in spec.publish_ports.to_docker_args() {
         cmd.arg(arg);

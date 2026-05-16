@@ -28,7 +28,8 @@ cp ../sbx/examples/sbx/hostname      .sbx/hostname
 | `network`         | VPN / Tailscale per-project policy.                            | `key=value` per line.                 |
 | `ssh`             | Marker. Enables SSH agent + `~/.ssh/{config,known_hosts}` mount. | Existence-only; content ignored.    |
 | `docker`          | Marker. Forwards the host docker socket. **Trusted projects only.** | Existence-only; content ignored. |
-| `claude-mounts`   | Extra host mounts for `sbx claude`.                            | One path per line, `#` comments ok.   |
+| `host-proxy`      | Marker + optional allowlist for the host tinyproxy sidecar.    | One hostname per line, `#` comments. Empty = unrestricted. |
+| `mounts`          | Extra host mounts for every sbx session.                       | `host[:container[:ro]]` per line, `#` comments ok. |
 | `claude-profile`  | Pins a named claude profile for this project.                  | One line, the profile name.           |
 
 `flavor` is the only required file — everything else is opt-in.

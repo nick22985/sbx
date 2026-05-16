@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use crate::docker::{PortSpec, bridge_subnet};
+use crate::docker::bridge_subnet;
 use crate::network::ProjectNetwork;
 use crate::proxy;
 use crate::util::{die, expand_tilde, home_dir, log, sanitize_tag};
@@ -67,25 +67,16 @@ fn container_exists(name: &str, include_stopped: bool) -> bool {
 }
 
 pub fn sidecar_attached_count(sidecar: &str) -> u32 {
-    let Ok(out) = Command::new("docker")
-        .args([
-            "ps",
-            "--filter",
-            &format!("network=container:{sidecar}"),
-            "--format",
-            "{{.Names}}",
-        ])
-        .output()
-    else {
-        return 0;
-    };
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .count() as u32
+    crate::docker::netns_attached_count(sidecar)
 }
 
-pub fn start_sidecar(spec: &str, project_root: &Path) -> String {
+pub fn start_sidecar(
+    spec: &str,
+    project_root: &Path,
+    publish_args: &[String],
+    extra_outbound_subnets: &[String],
+    attach_networks: &[String],
+) -> String {
     let sidecar = sidecar_name(spec);
     if sidecar_running(&sidecar) {
         let attached = sidecar_attached_count(&sidecar);
@@ -150,9 +141,8 @@ pub fn start_sidecar(spec: &str, project_root: &Path) -> String {
         force_rm(&sidecar);
     }
 
-    let ports = PortSpec::from_project(project_root).to_docker_args();
     let mut cmd = Command::new("docker");
-    cmd.args(["run", "-d", "--name", &sidecar]);
+    cmd.args(["create", "--name", &sidecar]);
     cmd.args([
         "--cap-add=NET_ADMIN",
         "--device=/dev/net/tun",
@@ -163,8 +153,20 @@ pub fn start_sidecar(spec: &str, project_root: &Path) -> String {
         "VPN_TYPE=openvpn",
         "-e",
         "OPENVPN_CUSTOM_CONFIG=/gluetun/custom.conf",
+        "-e",
+        "DNS_KEEP_NAMESERVERS=on",
     ]);
-    cmd.args(["-e", &format!("FIREWALL_OUTBOUND_SUBNETS={subnet}")]);
+    let mut outbound: Vec<String> = vec![subnet.clone()];
+    for s in extra_outbound_subnets {
+        if !s.is_empty() && !outbound.contains(s) {
+            outbound.push(s.clone());
+        }
+    }
+    let outbound_joined = outbound.join(",");
+    cmd.args(["-e", &format!("FIREWALL_OUTBOUND_SUBNETS={outbound_joined}")]);
+    if outbound.len() > 1 {
+        log(format!("  outbound subnets: {outbound_joined}"));
+    }
     let hostname_ports: Vec<u16> = proxy::read_routes(project_root)
         .iter()
         .map(|r| r.port)
@@ -185,7 +187,7 @@ pub fn start_sidecar(spec: &str, project_root: &Path) -> String {
     }
     cmd.arg("-v")
         .arg(format!("{}:/gluetun/custom.conf:ro", ovpn.display()));
-    for a in ports {
+    for a in publish_args {
         cmd.arg(a);
     }
     cmd.arg("qmcgaw/gluetun");
@@ -197,9 +199,58 @@ pub fn start_sidecar(spec: &str, project_root: &Path) -> String {
             for line in stderr.lines() {
                 log(format!("  docker: {line}"));
             }
-            die("failed to start vpn sidecar");
+            die("failed to create vpn sidecar");
         }
         Err(e) => die(format!("failed to spawn docker: {e}")),
+    }
+
+    // Attach extra networks BEFORE start, so the interfaces are up before
+    // OpenVPN installs catch-all routes (which would otherwise block any
+    // 172.x bridge attachment).
+    for net_name in attach_networks {
+        let conn = Command::new("docker")
+            .args(["network", "connect", net_name, &sidecar])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output();
+        match conn {
+            Ok(o) if o.status.success() => {
+                log(format!("  pre-attached to network: {net_name}"));
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                for line in stderr.lines() {
+                    log(format!("  docker: {line}"));
+                }
+                force_rm(&sidecar);
+                die(format!("failed to attach vpn sidecar to {net_name}"));
+            }
+            Err(e) => {
+                force_rm(&sidecar);
+                die(format!("failed to spawn docker: {e}"));
+            }
+        }
+    }
+
+    let started = Command::new("docker")
+        .args(["start", &sidecar])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output();
+    match started {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            for line in stderr.lines() {
+                log(format!("  docker: {line}"));
+            }
+            force_rm(&sidecar);
+            die("failed to start vpn sidecar");
+        }
+        Err(e) => {
+            force_rm(&sidecar);
+            die(format!("failed to spawn docker: {e}"));
+        }
     }
 
     for _ in 0..30 {

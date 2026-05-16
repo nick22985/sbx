@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::docker;
-use crate::project::{project_name, sbx_file};
-use crate::util::{config_dir, die, log};
+use crate::project::{project_base_name, sbx_file};
+use crate::util::{config_dir, die, home_dir, log};
 
 pub fn flavor_dir(flavor: &str) -> PathBuf {
     config_dir().join(flavor)
@@ -62,7 +62,53 @@ pub fn image_name(flavor: &str) -> String {
 }
 
 pub fn project_image_tag(flavor: &str, project_root: &Path) -> String {
-    format!("sbx-{}-{}:latest", flavor, project_name(project_root))
+    format!("sbx-{}-{}:latest", flavor, project_base_name(project_root))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CacheEntry {
+    HostBind { host_rel: String, container: String },
+    Volume { name: String, container: String },
+}
+
+fn cache_entries(flavor: &str) -> Vec<CacheEntry> {
+    let Ok(body) = fs::read_to_string(flavor_dir(flavor).join("caches")) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for raw in body.lines() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix('@') {
+            let Some((name, container)) = rest.split_once(':') else {
+                log(format!(
+                    "ignoring malformed volume cache line (need @name:/container): {raw}"
+                ));
+                continue;
+            };
+            let name = name.trim().to_string();
+            let container = container.trim().to_string();
+            if name.is_empty() || container.is_empty() {
+                continue;
+            }
+            out.push(CacheEntry::Volume { name, container });
+            continue;
+        }
+        let (host_rel, container) = match line.split_once(':') {
+            Some((h, c)) => (h.trim().to_string(), c.trim().to_string()),
+            None => (line.to_string(), format!("/home/dev/{line}")),
+        };
+        if host_rel.is_empty() || container.is_empty() {
+            continue;
+        }
+        out.push(CacheEntry::HostBind {
+            host_rel,
+            container,
+        });
+    }
+    out
 }
 
 pub fn cache_args(flavor: &str) -> Vec<String> {
@@ -75,46 +121,43 @@ pub fn cache_args(flavor: &str) -> Vec<String> {
             "sbx-mise-state-{flavor}:/home/dev/.local/state/mise"
         ));
     }
-    match flavor {
-        "npm" => {
-            out.push("-v".into());
-            out.push("sbx-npm-cache:/home/dev/.npm".into());
+    for entry in cache_entries(flavor) {
+        match entry {
+            CacheEntry::HostBind {
+                host_rel,
+                container,
+            } => {
+                let host = home_dir().join(&host_rel);
+                let _ = fs::create_dir_all(&host);
+                out.push("-v".into());
+                out.push(format!("{}:{container}", host.display()));
+            }
+            CacheEntry::Volume { name, container } => {
+                out.push("-v".into());
+                out.push(format!("{name}:{container}"));
+            }
         }
-        "bun" => {
-            out.push("-v".into());
-            out.push("sbx-bun-cache:/home/dev/.bun/install/cache".into());
-        }
-        "rust" => {
-            out.push("-v".into());
-            out.push("sbx-rust-registry:/home/dev/.cargo/registry".into());
-            out.push("-v".into());
-            out.push("sbx-rust-git:/home/dev/.cargo/git".into());
-        }
-        "java" => {
-            out.push("-v".into());
-            out.push("sbx-maven-cache:/home/dev/.m2".into());
-        }
-        "claude" => {
-            out.push("-v".into());
-            out.push("sbx-claude-local:/home/dev/.local".into());
-        }
-        _ => {}
+    }
+    if flavor == "claude" {
+        out.push("-v".into());
+        out.push("sbx-claude-local:/home/dev/.local".into());
     }
     out
 }
 
 pub fn flavor_volumes(flavor: &str) -> Vec<String> {
     let mut v: Vec<String> = match flavor {
-        "npm" => vec!["sbx-npm-cache".into()],
-        "bun" => vec!["sbx-bun-cache".into()],
-        "rust" => vec!["sbx-rust-registry".into(), "sbx-rust-git".into()],
-        "java" => vec!["sbx-maven-cache".into()],
         "claude" => vec!["sbx-claude-local".into()],
         _ => vec![],
     };
     if flavor != "claude" {
         v.push(format!("sbx-mise-{flavor}"));
         v.push(format!("sbx-mise-state-{flavor}"));
+    }
+    for entry in cache_entries(flavor) {
+        if let CacheEntry::Volume { name, .. } = entry {
+            v.push(name);
+        }
     }
     v
 }

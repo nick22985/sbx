@@ -31,6 +31,13 @@ pub fn die(msg: impl AsRef<str>) -> ! {
     std::process::exit(1);
 }
 
+/// Iterate `.sbx/*` config-file lines: strips `#`-comments, trims, skips empties.
+pub fn config_lines(body: &str) -> impl Iterator<Item = &str> {
+    body.lines()
+        .map(|raw| raw.split('#').next().unwrap_or("").trim())
+        .filter(|s| !s.is_empty())
+}
+
 pub fn sanitize_tag(s: &str) -> String {
     s.chars()
         .map(|c| {

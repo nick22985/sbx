@@ -1,0 +1,12 @@
+# Host paths or docker volumes to mount into the sandbox so caches and
+# credentials survive runs.
+#
+# Syntax (one entry per line; `#` comments and blanks ignored):
+#   <host_rel>                            host bind, container = /home/dev/<host_rel>
+#   <host_rel>:<container_path>           host bind, explicit container path
+#   @<volume_name>:<container_path>       named docker volume (auto-tracked by clean/purge)
+#
+# Default below: bind the host's ~/.m2 so settings.xml credentials and the
+# local repo cache are shared with the host. Swap for `@sbx-maven-cache:/home/dev/.m2`
+# if you'd rather keep the cache in an isolated docker volume.
+.m2

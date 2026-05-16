@@ -1,6 +1,0 @@
-# Extra host paths mounted into `sbx claude` for this project. One path per
-# line, `~` expanded. `#` comments and blank lines allowed. Missing paths
-# are silently skipped. Layered on top of ~/.config/sbx/claude-mounts.
-~/dotfiles
-~/projects/personal/snd
-~/projects/work/api

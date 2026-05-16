@@ -1,0 +1,17 @@
+# Global mounts — host paths mounted into every sbx session.
+# Layered: ~/.config/sbx/mounts (global) -> .sbx/mounts (project) -> CLI.
+#
+# Syntax (one per line, `#` comments allowed, missing host paths skipped):
+#   host                       — same path on both sides
+#   host:container             — explicit container path
+#   host:container:ro          — read-only
+#   host::ro                   — same-path bind, read-only
+#
+# Tilde expansion: `~/` on the host expands to the host's $HOME; `~/` on the
+# container side expands to the flavor's container home (e.g. /home/dev).
+~/.m2
+~/.gradle
+
+# Example: drop your Maven settings.xml on top of the named volume so the
+# `java` flavor still gets cache reuse but picks up your auth config.
+# ~/.m2/settings.xml:~/.m2/settings.xml:ro

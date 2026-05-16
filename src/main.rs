@@ -2,8 +2,9 @@ use clap::{CommandFactory, Parser};
 use std::io;
 
 use sbx::cli::{
-    ClaudeCmd, Cli, Cmd, ConfigCmd, DockerCmd, EnvCmd, HostnameCmd, NetCmd, PortCmd, ProfileCmd,
-    ProxyCmd, ServiceCmd, SshCmd, StartCmd, TailscaleCmd, VpnCmd,
+    ClaudeCmd, Cli, Cmd, ConfigCmd, DockerCmd, EnvCmd, HostProxyCmd, HostnameCmd, NetCmd, PortCmd,
+    ProfileCmd, ProxyCmd, PublicCmd, ServiceCmd, SshCmd, StartCmd, TailscaleCmd, TunnelCmd,
+    TunnelTopCmd, VpnCmd,
 };
 use sbx::commands;
 use sbx::env_file;
@@ -72,8 +73,45 @@ fn main() {
                 ProxyCmd::Routes => commands::proxy::Action::Routes,
                 ProxyCmd::Logs { follow } => commands::proxy::Action::Logs { follow },
                 ProxyCmd::Stop => commands::proxy::Action::Stop,
+                ProxyCmd::Mkcert => commands::proxy::Action::Mkcert,
             };
             commands::proxy::run(act);
+        }
+        Some(Cmd::Tunnel { action }) => {
+            let act = match action.unwrap_or(TunnelTopCmd::Status) {
+                TunnelTopCmd::Status => commands::tunnel::TopAction::Status,
+                TunnelTopCmd::Logs { follow } => commands::tunnel::TopAction::Logs { follow },
+                TunnelTopCmd::Stop => commands::tunnel::TopAction::Stop,
+            };
+            commands::tunnel::run_top(&cwd(), act);
+        }
+        Some(Cmd::HostProxy { action }) => {
+            let action = action.unwrap_or(HostProxyCmd::Status);
+            let act = match &action {
+                HostProxyCmd::On => commands::host_proxy::Action::On,
+                HostProxyCmd::Off => commands::host_proxy::Action::Off,
+                HostProxyCmd::Status => commands::host_proxy::Action::Status,
+                HostProxyCmd::Logs { follow } => commands::host_proxy::Action::Logs { follow: *follow },
+                HostProxyCmd::Stop => commands::host_proxy::Action::Stop,
+                HostProxyCmd::Allow { host } => commands::host_proxy::Action::Allow(host),
+                HostProxyCmd::Disallow { host } => commands::host_proxy::Action::Disallow(host),
+                HostProxyCmd::List => commands::host_proxy::Action::List,
+                HostProxyCmd::Reload => commands::host_proxy::Action::Reload,
+            };
+            commands::host_proxy::run(&cwd(), act);
+        }
+        Some(Cmd::Public { action }) => {
+            let action = action.unwrap_or(PublicCmd::Status);
+            let act = match &action {
+                PublicCmd::List => commands::public::Action::List,
+                PublicCmd::Add { hostname, port } => commands::public::Action::Add(hostname, port),
+                PublicCmd::Rm { hostname } => commands::public::Action::Remove(hostname),
+                PublicCmd::Login => commands::public::Action::Login,
+                PublicCmd::Status => commands::public::Action::Status,
+                PublicCmd::Logs { follow } => commands::public::Action::Logs { follow: *follow },
+                PublicCmd::Stop => commands::public::Action::Stop,
+            };
+            commands::public::run(&cwd(), act);
         }
         Some(Cmd::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "sbx", &mut io::stdout());
@@ -166,6 +204,26 @@ fn dispatch_config(action: Option<ConfigCmd>) {
                 HostnameCmd::Rm { hostname } => commands::hostname::Action::Remove(hostname),
             };
             commands::hostname::run(&cwd(), act);
+        }
+        ConfigCmd::Tunnel { action } => {
+            let action = action.unwrap_or(TunnelCmd::List);
+            let act = match &action {
+                TunnelCmd::List => commands::tunnel::Action::List,
+                TunnelCmd::Add {
+                    direction,
+                    left,
+                    right,
+                } => commands::tunnel::Action::Add {
+                    direction,
+                    left,
+                    right,
+                },
+                TunnelCmd::Rm { direction, left } => commands::tunnel::Action::Remove {
+                    direction,
+                    left,
+                },
+            };
+            commands::tunnel::run(&cwd(), act);
         }
         ConfigCmd::Env { action } => match action.unwrap_or(EnvCmd::List) {
             EnvCmd::List => commands::env::run(commands::env::Action::List),

@@ -19,8 +19,8 @@ sbx init npm         # mark the project + build if needed
 sbx shell            # drop into the sandbox
 ```
 
-Optional: copy `claude-mounts` to `~/.config/sbx/claude-mounts` to mount
-caches like `~/.m2` / `~/.gradle` into every `sbx claude` session.
+Optional: copy `mounts` to `~/.config/sbx/mounts` to mount caches like
+`~/.m2` / `~/.gradle` into every sbx session.
 
 ## Layout
 
@@ -35,7 +35,7 @@ java/        Java + Maven via mise.
 claude/      Heavyweight image with node + bun + rust + java + python +
              the Claude Code CLI + graphify. Used by `sbx claude`. Its
              entrypoint runs `graphify install` once into ~/.claude.
-claude-mounts  Example global mount list for `sbx claude`.
+mounts       Example global mount list (applies to every sbx session).
 ```
 
 ## What's in `base/`

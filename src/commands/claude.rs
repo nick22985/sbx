@@ -1,10 +1,10 @@
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::docker::{self, Network, PortSpec, RunSpec};
 use crate::flavor::{build_image, image_exists_or_build, image_name};
-use crate::project::{project_name, sbx_file};
-use crate::util::{config_dir, die, expand_tilde, home_dir, log};
+use crate::mounts;
+use crate::project::{project_base_name, project_name, sbx_file, worktree_suffix};
+use crate::util::{config_dir, die, home_dir, log};
 
 const FLAVOR: &str = "claude";
 
@@ -18,6 +18,20 @@ pub fn run(
     no_rc: bool,
     cli_docker: bool,
 ) -> i32 {
+    let mut cli_mounts = cli_mounts;
+    let mut cli_profile = cli_profile;
+    let mut safe = safe;
+    let mut no_rc = no_rc;
+    let mut cli_docker = cli_docker;
+    let args = extract_sbx_flags(
+        args,
+        &mut cli_mounts,
+        &mut cli_profile,
+        &mut safe,
+        &mut no_rc,
+        &mut cli_docker,
+    );
+
     docker::ensure_ssh_agent_ready(cwd);
     image_exists_or_build(FLAVOR);
 
@@ -43,7 +57,7 @@ pub fn run(
         v
     };
 
-    let extra_mounts = resolve_extra_mounts(cwd, &cli_mounts);
+    let extra_mounts = mounts::resolve(cwd, &home_dir(), &cli_mounts);
     let profile = resolve_profile(cwd, cli_profile.as_deref());
     let extra_host_args = build_claude_mount_args(profile.as_deref());
 
@@ -53,6 +67,14 @@ pub fn run(
             .unwrap_or(false);
 
     let image = image_name(FLAVOR);
+    let extra_env = vec![
+        ("SBX_PROJECT".into(), project_name(cwd)),
+        ("SBX_PROJECT_BASE".into(), project_base_name(cwd)),
+        (
+            "SBX_WORKTREE".into(),
+            worktree_suffix(cwd).unwrap_or_default(),
+        ),
+    ];
     let spec = RunSpec {
         image: &image,
         flavor: FLAVOR,
@@ -66,6 +88,7 @@ pub fn run(
         container_home: home_dir(),
         labels: Vec::new(),
         mount_docker_socket,
+        extra_env,
     };
     docker::run_container(spec)
 }
@@ -73,42 +96,6 @@ pub fn run(
 pub fn build(no_cache: bool) {
     log(format!("building sbx-{FLAVOR}:latest"));
     build_image(FLAVOR, no_cache);
-}
-
-fn resolve_extra_mounts(cwd: &Path, cli: &[String]) -> Vec<PathBuf> {
-    let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
-    let mut out = Vec::new();
-    let cwd_canon = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
-    let push = |raw: &str, out: &mut Vec<PathBuf>, seen: &mut BTreeSet<PathBuf>| {
-        let trimmed = raw.split('#').next().unwrap_or("").trim();
-        if trimmed.is_empty() {
-            return;
-        }
-        let path = expand_tilde(trimmed);
-        let canon = std::fs::canonicalize(&path).unwrap_or(path);
-        if canon == cwd_canon {
-            return;
-        }
-        if seen.insert(canon.clone()) {
-            out.push(canon);
-        }
-    };
-    let global = config_dir().join("claude-mounts");
-    if let Ok(contents) = std::fs::read_to_string(&global) {
-        for line in contents.lines() {
-            push(line, &mut out, &mut seen);
-        }
-    }
-    let file = sbx_file(cwd, "claude-mounts");
-    if let Ok(contents) = std::fs::read_to_string(&file) {
-        for line in contents.lines() {
-            push(line, &mut out, &mut seen);
-        }
-    }
-    for raw in cli {
-        push(raw, &mut out, &mut seen);
-    }
-    out
 }
 
 pub fn profiles_root() -> PathBuf {
@@ -244,6 +231,43 @@ pub fn print_current_profile(cwd: &Path, cli_profile: Option<&str>) {
         Some(name) => println!("{name}"),
         None => println!("(none — using host ~/.claude.json)"),
     }
+}
+
+fn extract_sbx_flags(
+    args: Vec<String>,
+    mounts: &mut Vec<String>,
+    profile: &mut Option<String>,
+    safe: &mut bool,
+    no_rc: &mut bool,
+    docker: &mut bool,
+) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut iter = args.into_iter();
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--docker" => *docker = true,
+            "--safe" | "-s" => *safe = true,
+            "--no-rc" => *no_rc = true,
+            "--profile" | "-p" => match iter.next() {
+                Some(v) => *profile = Some(v),
+                None => die("--profile requires a value"),
+            },
+            "--mount" | "-m" => match iter.next() {
+                Some(v) => mounts.push(v),
+                None => die("--mount requires a value"),
+            },
+            _ => {
+                if let Some(v) = a.strip_prefix("--profile=") {
+                    *profile = Some(v.to_string());
+                } else if let Some(v) = a.strip_prefix("--mount=") {
+                    mounts.push(v.to_string());
+                } else {
+                    out.push(a);
+                }
+            }
+        }
+    }
+    out
 }
 
 fn build_claude_mount_args(profile: Option<&str>) -> Vec<String> {

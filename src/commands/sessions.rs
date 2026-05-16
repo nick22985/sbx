@@ -31,6 +31,11 @@ enum Kind {
     Dev,
     Service,
     Vpn,
+    Tailscale,
+    Tunnel,
+    Proxy,
+    Public,
+    HostProxy,
     Other,
 }
 
@@ -40,6 +45,11 @@ impl Kind {
             Kind::Dev => "dev",
             Kind::Service => "service",
             Kind::Vpn => "vpn",
+            Kind::Tailscale => "tailscale",
+            Kind::Tunnel => "tunnel",
+            Kind::Proxy => "proxy",
+            Kind::Public => "public",
+            Kind::HostProxy => "host-proxy",
             Kind::Other => "?",
         }
     }
@@ -63,7 +73,13 @@ fn parse_row(line: &str) -> Option<Row> {
     let _ports = parts.next().unwrap_or("");
 
     let rest = name.strip_prefix("sbx-")?;
-    let (kind, flavor, project, pid) = if let Some(after) = rest.strip_prefix("svc-") {
+    let (kind, flavor, project, pid) = if rest == "proxy" {
+        (Kind::Proxy, String::new(), String::new(), String::new())
+    } else if rest == "public" {
+        (Kind::Public, String::new(), String::new(), String::new())
+    } else if rest == "host-proxy" {
+        (Kind::HostProxy, String::new(), String::new(), String::new())
+    } else if let Some(after) = rest.strip_prefix("svc-") {
         let (project, short) = after.rsplit_once('-').unwrap_or((after, ""));
         (
             Kind::Service,
@@ -73,6 +89,21 @@ fn parse_row(line: &str) -> Option<Row> {
         )
     } else if let Some(after) = rest.strip_prefix("vpn-") {
         (Kind::Vpn, String::new(), after.to_string(), String::new())
+    } else if let Some(after) = rest.strip_prefix("tailscale-") {
+        (
+            Kind::Tailscale,
+            String::new(),
+            after.to_string(),
+            String::new(),
+        )
+    } else if let Some(after) = rest.strip_prefix("tunnel-") {
+        let (project, tag) = after.rsplit_once('-').unwrap_or((after, ""));
+        (
+            Kind::Tunnel,
+            String::new(),
+            project.to_string(),
+            tag.to_string(),
+        )
     } else {
         let (head, pid) = rest.rsplit_once('-').unwrap_or((rest, ""));
         let (flavor, project) = head.split_once('-').unwrap_or((head, ""));

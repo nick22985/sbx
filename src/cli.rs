@@ -104,6 +104,31 @@ fn complete_configured_port(current: &OsStr) -> Vec<CompletionCandidate> {
         .collect()
 }
 
+fn complete_configured_tunnel_key(current: &OsStr) -> Vec<CompletionCandidate> {
+    let cur = current.to_str().unwrap_or("");
+    let Ok(cwd) = std::env::current_dir() else {
+        return Vec::new();
+    };
+    let Some((_, root)) = project_flavor(&cwd) else {
+        return Vec::new();
+    };
+    crate::tunnel::read_tunnels(&root)
+        .into_iter()
+        .map(|t| format!("{}:{}", t.direction.as_str(), t.left))
+        .filter(|s| cur.is_empty() || fuzzy(cur, s))
+        .map(CompletionCandidate::new)
+        .collect()
+}
+
+fn complete_tunnel_direction(current: &OsStr) -> Vec<CompletionCandidate> {
+    let cur = current.to_str().unwrap_or("");
+    ["out", "in", "via"]
+        .iter()
+        .filter(|d| cur.is_empty() || fuzzy(cur, d))
+        .map(|d| CompletionCandidate::new(*d))
+        .collect()
+}
+
 fn complete_configured_hostname(current: &OsStr) -> Vec<CompletionCandidate> {
     let cur = current.to_str().unwrap_or("");
     let Ok(cwd) = std::env::current_dir() else {
@@ -113,6 +138,36 @@ fn complete_configured_hostname(current: &OsStr) -> Vec<CompletionCandidate> {
         return Vec::new();
     };
     crate::proxy::read_routes(&root)
+        .into_iter()
+        .filter(|r| cur.is_empty() || fuzzy(cur, &r.hostname))
+        .map(|r| CompletionCandidate::new(r.hostname))
+        .collect()
+}
+
+fn complete_host_proxy_allowed(current: &OsStr) -> Vec<CompletionCandidate> {
+    let cur = current.to_str().unwrap_or("");
+    let Ok(cwd) = std::env::current_dir() else {
+        return Vec::new();
+    };
+    let Some((_, root)) = project_flavor(&cwd) else {
+        return Vec::new();
+    };
+    crate::host_proxy::read_allowed_hosts(&root)
+        .into_iter()
+        .filter(|h| cur.is_empty() || fuzzy(cur, h))
+        .map(CompletionCandidate::new)
+        .collect()
+}
+
+fn complete_configured_public_host(current: &OsStr) -> Vec<CompletionCandidate> {
+    let cur = current.to_str().unwrap_or("");
+    let Ok(cwd) = std::env::current_dir() else {
+        return Vec::new();
+    };
+    let Some((_, root)) = project_flavor(&cwd) else {
+        return Vec::new();
+    };
+    crate::public::read_public(&root)
         .into_iter()
         .filter(|r| cur.is_empty() || fuzzy(cur, &r.hostname))
         .map(|r| CompletionCandidate::new(r.hostname))
@@ -237,6 +292,19 @@ pub enum Cmd {
         #[command(subcommand)]
         action: Option<ProxyCmd>,
     },
+    Tunnel {
+        #[command(subcommand)]
+        action: Option<TunnelTopCmd>,
+    },
+    Public {
+        #[command(subcommand)]
+        action: Option<PublicCmd>,
+    },
+    #[command(alias = "hostproxy")]
+    HostProxy {
+        #[command(subcommand)]
+        action: Option<HostProxyCmd>,
+    },
     Completions {
         shell: clap_complete::Shell,
     },
@@ -297,6 +365,25 @@ pub enum PortCmd {
     Rm {
         #[arg(add = ArgValueCompleter::new(complete_configured_port))]
         port: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum TunnelCmd {
+    #[command(alias = "ls")]
+    List,
+    Add {
+        #[arg(add = ArgValueCompleter::new(complete_tunnel_direction))]
+        direction: String,
+        left: String,
+        right: String,
+    },
+    #[command(alias = "remove", alias = "del", alias = "delete")]
+    Rm {
+        #[arg(add = ArgValueCompleter::new(complete_tunnel_direction))]
+        direction: String,
+        #[arg(add = ArgValueCompleter::new(complete_configured_tunnel_key))]
+        left: String,
     },
 }
 
@@ -420,6 +507,11 @@ pub enum ConfigCmd {
         #[command(subcommand)]
         action: Option<HostnameCmd>,
     },
+    #[command(alias = "tunnels")]
+    Tunnel {
+        #[command(subcommand)]
+        action: Option<TunnelCmd>,
+    },
     Env {
         #[command(subcommand)]
         action: Option<EnvCmd>,
@@ -450,6 +542,64 @@ pub enum ProxyCmd {
     Status,
     #[command(alias = "ls")]
     Routes,
+    Logs {
+        #[arg(short = 'f', long = "follow")]
+        follow: bool,
+    },
+    Stop,
+    Mkcert,
+}
+
+#[derive(Subcommand)]
+pub enum TunnelTopCmd {
+    Status,
+    Logs {
+        #[arg(short = 'f', long = "follow")]
+        follow: bool,
+    },
+    Stop,
+}
+
+#[derive(Subcommand)]
+pub enum HostProxyCmd {
+    #[command(alias = "enable")]
+    On,
+    #[command(alias = "disable")]
+    Off,
+    Status,
+    Logs {
+        #[arg(short = 'f', long = "follow")]
+        follow: bool,
+    },
+    Stop,
+    Allow {
+        host: String,
+    },
+    #[command(alias = "deny", alias = "remove", alias = "rm")]
+    Disallow {
+        #[arg(add = ArgValueCompleter::new(complete_host_proxy_allowed))]
+        host: String,
+    },
+    #[command(alias = "ls")]
+    List,
+    Reload,
+}
+
+#[derive(Subcommand)]
+pub enum PublicCmd {
+    #[command(alias = "ls")]
+    List,
+    Add {
+        hostname: String,
+        port: String,
+    },
+    #[command(alias = "remove", alias = "del", alias = "delete")]
+    Rm {
+        #[arg(add = ArgValueCompleter::new(complete_configured_public_host))]
+        hostname: String,
+    },
+    Login,
+    Status,
     Logs {
         #[arg(short = 'f', long = "follow")]
         follow: bool,

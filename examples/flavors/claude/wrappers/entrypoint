@@ -6,6 +6,11 @@
 # marker file makes subsequent runs a no-op.
 set -eu
 
+case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) PATH="$HOME/.local/bin:$PATH"; export PATH ;;
+esac
+
 MARKER="${HOME}/.claude/.sbx-graphify-installed"
 
 if [ ! -e "$MARKER" ] && command -v graphify >/dev/null 2>&1; then

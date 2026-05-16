@@ -9,6 +9,7 @@ pub enum Action {
     Routes,
     Logs { follow: bool },
     Stop,
+    Mkcert,
 }
 
 pub fn run(action: Action) {
@@ -17,23 +18,33 @@ pub fn run(action: Action) {
         Action::Routes => routes(),
         Action::Logs { follow } => logs(follow),
         Action::Stop => stop(),
+        Action::Mkcert => mkcert(),
+    }
+}
+
+fn mkcert() {
+    if let Err(e) = proxy::generate_local_certs() {
+        log(e);
+        std::process::exit(1);
+    }
+    if proxy::sidecar_running() {
+        log("restarting proxy sidecar to pick up new certs");
+        proxy::force_stop_sidecar();
+        proxy::start_sidecar();
+    } else {
+        log("certs ready; next session start will mount them");
     }
 }
 
 fn status() {
     let running = proxy::sidecar_running();
-    let exists = proxy::sidecar_exists();
     let attached = proxy::attached_containers();
     let route_files = proxy::route_files();
 
+    println!("sidecar:   {}", crate::docker::state_line(SIDECAR));
     if running {
-        println!("sidecar:   running ({SIDECAR})");
         println!("listen:    http://*.sbx.localhost/  (127.0.0.1:80)");
         println!("dashboard: http://{DASHBOARD_HOST}/dashboard/");
-    } else if exists {
-        println!("sidecar:   stopped ({SIDECAR})");
-    } else {
-        println!("sidecar:   not present ({SIDECAR})");
     }
     println!("network:   {NETWORK}");
     println!("attached:  {} container(s)", attached.len());
@@ -195,15 +206,7 @@ fn logs(follow: bool) {
         log(format!("proxy sidecar not present ({SIDECAR})"));
         return;
     }
-    let mut cmd = Command::new("docker");
-    cmd.arg("logs");
-    if follow {
-        cmd.arg("-f");
-    } else {
-        cmd.args(["--tail", "200"]);
-    }
-    cmd.arg(SIDECAR);
-    let _ = cmd.status();
+    crate::docker::tail_logs(SIDECAR, follow);
 }
 
 fn stop() {
@@ -239,11 +242,13 @@ mod tests {
                 hostname: "app.sbx.localhost".into(),
                 path: Some("/api".into()),
                 port: 1337,
+                force_http: false,
             },
             Route {
                 hostname: "app.sbx.localhost".into(),
                 path: None,
                 port: 3000,
+                force_http: false,
             },
         ];
         let body = render_file_route_for_test("app", "sbx-vpn-host", &routes);

@@ -23,7 +23,7 @@ compromised package and exfiltrated GitHub tokens, npm tokens, and cloud
 credentials from anyone who installed it, turning developer machines into
 the spreading mechanism. It wasn't the first and won't be the last:
 similar credential-stealing payloads keep shipping through compromised
-packages, malicious VS Code extensions, and prompt-injected agents.
+packages and prompt-injected agents.
 
 `sbx` shrinks that blast radius. Each project runs in its own container
 with only the files it needs: the repo, declared mounts, scoped caches.

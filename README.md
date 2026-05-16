@@ -36,9 +36,7 @@ sidecar so per-project secrets stay per-project.
 It's not a security boundary as strong as a VM, but it's a meaningful
 default-deny for the day-to-day "I just ran `npm install`" risks.
 
-<video src="docs/images/hero.mp4" controls autoplay loop muted playsinline width="100%">
-  Your browser does not support inline video. <a href="docs/images/hero.mp4">Download the demo (MP4)</a>.
-</video>
+<img alt="sbx demo: cd into a project, sbx init bun, sbx config port add 3000, sbx run, dev server up — one command to a working sandbox." src="docs/images/hero.gif">
 
 ## Quick start
 

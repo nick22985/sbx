@@ -194,7 +194,11 @@ fn container_id(name: &str) -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 pub fn bridge_subnet() -> String {
@@ -220,7 +224,11 @@ fn container_inspect_bridge(field: &str) -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -355,6 +363,100 @@ pub fn project_ssh_enabled(project_root: &Path) -> bool {
 pub fn project_docker_enabled(project_root: &Path) -> bool {
     let f = sbx_file(project_root, "docker");
     f.is_file()
+}
+
+pub fn project_gui_enabled(project_root: &Path) -> bool {
+    let f = sbx_file(project_root, "gui");
+    f.is_file()
+}
+
+pub fn gui_mount_args(project_root: &Path) -> Vec<String> {
+    if !project_gui_enabled(project_root) {
+        return Vec::new();
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut forwarded = Vec::new();
+
+    if let Ok(rt) = std::env::var("XDG_RUNTIME_DIR")
+        && !rt.is_empty()
+    {
+        let rt_path = PathBuf::from(&rt);
+        if rt_path.is_dir() {
+            let uid = crate::flavor::nix_uid();
+            let container_rt = format!("/run/user/{uid}");
+            out.push("-v".into());
+            out.push(format!("{}:{container_rt}", rt_path.display()));
+            out.push("-e".into());
+            out.push(format!("XDG_RUNTIME_DIR={container_rt}"));
+            forwarded.push("XDG_RUNTIME_DIR".to_string());
+
+            if let Ok(w) = std::env::var("WAYLAND_DISPLAY")
+                && !w.is_empty()
+            {
+                out.push("-e".into());
+                out.push(format!("WAYLAND_DISPLAY={w}"));
+                forwarded.push(format!("WAYLAND_DISPLAY={w}"));
+            }
+            if let Ok(bus) = std::env::var("DBUS_SESSION_BUS_ADDRESS")
+                && !bus.is_empty()
+            {
+                out.push("-e".into());
+                out.push(format!("DBUS_SESSION_BUS_ADDRESS={bus}"));
+                forwarded.push("DBUS_SESSION_BUS_ADDRESS".to_string());
+            }
+        }
+    }
+
+    if let Ok(display) = std::env::var("DISPLAY")
+        && !display.is_empty()
+    {
+        let x11 = Path::new("/tmp/.X11-unix");
+        if x11.is_dir() {
+            out.push("-v".into());
+            out.push("/tmp/.X11-unix:/tmp/.X11-unix".into());
+            out.push("-e".into());
+            out.push(format!("DISPLAY={display}"));
+            forwarded.push(format!("DISPLAY={display}"));
+        }
+        let xauth_path = std::env::var("XAUTHORITY")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home_dir().join(".Xauthority"));
+        if xauth_path.is_file() {
+            out.push("-v".into());
+            out.push(format!("{}:/tmp/.Xauthority:ro", xauth_path.display()));
+            out.push("-e".into());
+            out.push("XAUTHORITY=/tmp/.Xauthority".into());
+        }
+    }
+
+    let dri = Path::new("/dev/dri");
+    if dri.exists() {
+        out.push("--device".into());
+        out.push("/dev/dri".into());
+        if let Some(gid) = render_or_video_gid() {
+            out.push("--group-add".into());
+            out.push(gid.to_string());
+        }
+    }
+
+    if forwarded.is_empty() {
+        log(".sbx/gui is enabled but no host DISPLAY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR was found");
+    } else {
+        log(format!("gui forwarding: {}", forwarded.join(", ")));
+    }
+    out
+}
+
+fn render_or_video_gid() -> Option<u32> {
+    use std::os::unix::fs::MetadataExt;
+    for node in ["/dev/dri/renderD128", "/dev/dri/card0"] {
+        if let Ok(m) = std::fs::metadata(node) {
+            return Some(m.gid());
+        }
+    }
+    None
 }
 
 pub fn host_docker_socket() -> PathBuf {
@@ -576,6 +678,9 @@ pub fn run_container(spec: RunSpec<'_>) -> i32 {
         cmd.arg(arg);
     }
     for arg in ssh_mount_args(spec.project_root, &spec.container_home) {
+        cmd.arg(arg);
+    }
+    for arg in gui_mount_args(spec.project_root) {
         cmd.arg(arg);
     }
     if spec.mount_docker_socket {

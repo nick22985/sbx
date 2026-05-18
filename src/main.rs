@@ -2,8 +2,8 @@ use clap::{CommandFactory, Parser};
 use std::io;
 
 use sbx::cli::{
-    ClaudeCmd, Cli, Cmd, ConfigCmd, DockerCmd, EnvCmd, HostProxyCmd, HostnameCmd, NetCmd, PortCmd,
-    ProfileCmd, ProxyCmd, PublicCmd, ServiceCmd, SshCmd, StartCmd, TailscaleCmd, TunnelCmd,
+    ClaudeCmd, Cli, Cmd, ConfigCmd, DockerCmd, EnvCmd, GuiCmd, HostProxyCmd, HostnameCmd, NetCmd,
+    PortCmd, ProfileCmd, ProxyCmd, PublicCmd, ServiceCmd, SshCmd, StartCmd, TailscaleCmd, TunnelCmd,
     TunnelTopCmd, VpnCmd,
 };
 use sbx::commands;
@@ -23,7 +23,9 @@ fn main() {
 
     match cli.command {
         Some(Cmd::Init { private, flavor }) => commands::init::run(&cwd(), &flavor, private),
-        Some(Cmd::Shell) => std::process::exit(commands::shell::from_project(&cwd())),
+        Some(Cmd::Shell { flavor, cmd }) => {
+            std::process::exit(commands::shell::from_project(&cwd(), flavor, cmd))
+        }
         Some(Cmd::Run) => std::process::exit(commands::run::run(&cwd())),
         Some(Cmd::Stop) => commands::stop::run(&cwd()),
         Some(Cmd::Build { flavor }) => commands::build::run(&cwd(), false, flavor.as_deref()),
@@ -272,6 +274,14 @@ fn dispatch_config(action: Option<ConfigCmd>) {
                 DockerCmd::Status => commands::docker::Action::Status,
             };
             commands::docker::run(&cwd(), act);
+        }
+        ConfigCmd::Gui { action } => {
+            let act = match action.unwrap_or(GuiCmd::Status) {
+                GuiCmd::On => commands::gui::Action::On,
+                GuiCmd::Off => commands::gui::Action::Off,
+                GuiCmd::Status => commands::gui::Action::Status,
+            };
+            commands::gui::run(&cwd(), act);
         }
     }
 }

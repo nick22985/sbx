@@ -3,6 +3,7 @@ pub mod claude;
 pub mod clean;
 pub mod docker;
 pub mod env;
+pub mod gui;
 pub mod host_proxy;
 pub mod hostname;
 pub mod init;

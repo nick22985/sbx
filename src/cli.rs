@@ -240,7 +240,6 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Cmd>,
 
-    /// Ad-hoc: `sbx <flavor>` enters a transient shell of <flavor> in cwd.
     #[arg(add = ArgValueCompleter::new(complete_top_level))]
     pub flavor: Option<String>,
 }
@@ -253,7 +252,13 @@ pub enum Cmd {
         #[arg(add = ArgValueCompleter::new(complete_flavor))]
         flavor: String,
     },
-    Shell,
+    Shell {
+        #[arg(short = 'f', long = "flavor", alias = "flavour", value_name = "FLAVOR",
+              add = ArgValueCompleter::new(complete_flavor))]
+        flavor: Option<String>,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        cmd: Vec<String>,
+    },
     Run,
     Stop,
     Build {
@@ -496,6 +501,15 @@ pub enum DockerCmd {
 }
 
 #[derive(Subcommand)]
+pub enum GuiCmd {
+    #[command(alias = "enable")]
+    On,
+    #[command(alias = "disable")]
+    Off,
+    Status,
+}
+
+#[derive(Subcommand)]
 pub enum ConfigCmd {
     #[command(alias = "ports")]
     Port {
@@ -534,6 +548,11 @@ pub enum ConfigCmd {
     Docker {
         #[command(subcommand)]
         action: Option<DockerCmd>,
+    },
+    #[command(alias = "display", alias = "wayland", alias = "x11")]
+    Gui {
+        #[command(subcommand)]
+        action: Option<GuiCmd>,
     },
 }
 

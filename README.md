@@ -89,13 +89,42 @@ bring them up.
 sbx init [-p] <flavor>  Mark cwd as <flavor> and build the image
                         -p stores the marker in $SBX_PRIVATE_DIR instead of ./.sbx
 sbx                     Print top-level help
-sbx shell               Enter the project's container
+sbx shell [cmd...]      Enter the project's container (or run `cmd` in it)
+sbx shell -f <flavor> [cmd...]
+                        Override the flavor (ad-hoc), with optional command
 sbx <flavor>            Ad-hoc transient shell of <flavor> in cwd
 sbx run                 Run `.sbx/start` in a fresh container
 sbx sessions            List running sbx containers (alias: ps)
 sbx stop                Stop containers, services, and network sidecars
 sbx list                List available flavors
 ```
+
+### Shadowing host tools (npm, bun, cargo, …)
+
+`sbx shell -f <flavor> [cmd...]` lets you run a one-shot command inside
+the matching flavor container from *anywhere* on the host, without
+`sbx init`-ing the directory first. Pair it with shell aliases to
+transparently route risky tools through their sandbox:
+
+```sh
+# ~/.bashrc / ~/.zshrc
+alias npm='sbx shell -f npm npm'
+alias npx='sbx shell -f npm npx'
+alias bun='sbx shell -f bun bun'
+alias bunx='sbx shell -f bun bunx'
+alias cargo='sbx shell -f rust cargo'
+alias rustc='sbx shell -f rust rustc'
+```
+
+Now `npm install` in any directory runs `npm install` inside the `npm`
+flavor's container with cwd bind-mounted at the same path — no host
+`node_modules` postinstall scripts, no host `cargo build.rs` running with
+your credentials. If the project has its own `.sbx/flavor`, drop the
+`-f` and the project's flavor is used automatically (`sbx shell npm install`).
+
+Flavor name vs. binary: the `-f` arg picks the **image**, the rest is
+the **command**. Useful when they differ — e.g. `sbx shell -f rust cargo
+build` (the `rust` flavor ships `cargo`, not `rust`).
 
 ## Images
 

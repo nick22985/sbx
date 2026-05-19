@@ -374,8 +374,8 @@ pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32
         extra_env.push(("SBX_PUBLIC_HOSTNAMES".into(), public_hosts.join(",")));
     }
 
-    let container_home = PathBuf::from("/home/dev");
-    let extra_mounts = mounts::resolve(project_root, &container_home, &[]);
+    let container_home = crate::flavor::flavor_container_home(flavor);
+    let extra_mounts = mounts::resolve(project_root, &container_home, &[], Some(flavor));
     let spec = RunSpec {
         image: &image,
         flavor,

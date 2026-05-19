@@ -3,10 +3,11 @@
 # sbx-base — common layer shared by all sbx flavors. Per-language flavors
 # `FROM sbx-base:latest` and install only their language tool on top. Keep
 # this minimal: anything language-specific belongs in the leaf flavor.
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 ARG USER_UID=1000
 ARG USER_GID=1000
+ARG USER_HOME=/home/dev
 ARG SBX_GUARDDOG=1
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -37,13 +38,14 @@ RUN if getent group "$USER_GID" >/dev/null; then \
     fi \
     && if getent passwd "$USER_UID" >/dev/null; then \
         EXISTING_USER="$(getent passwd "$USER_UID" | cut -d: -f1)"; \
-        if [ "$EXISTING_USER" != "dev" ]; then usermod -l dev -d /home/dev -m "$EXISTING_USER"; fi; \
+        if [ "$EXISTING_USER" != "dev" ]; then usermod -l dev -d "$USER_HOME" -m "$EXISTING_USER"; \
+        else usermod -d "$USER_HOME" -m dev; fi; \
         usermod -g dev dev; \
     else \
-        useradd -m -u "$USER_UID" -g dev -s /bin/bash dev; \
+        useradd -m -u "$USER_UID" -g dev -d "$USER_HOME" -s /bin/bash dev; \
     fi \
-    && mkdir -p /home/dev /opt/sbx/bin \
-    && chown -R dev:dev /home/dev
+    && mkdir -p "$USER_HOME" /opt/sbx/bin \
+    && chown -R dev:dev "$USER_HOME"
 
 RUN --mount=type=cache,target=/tmp/sbx-dl,sharing=locked set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -97,17 +99,17 @@ RUN --mount=type=cache,target=/tmp/sbx-dl,sharing=locked set -eux; \
     rm -rf /tmp/docker; \
     docker --version
 
-RUN printf 'export PATH=/opt/sbx/bin:/home/dev/.local/bin:/home/dev/.local/share/mise/shims:$PATH\nexport MISE_INSTALL_MISSING_TOOLS=1\neval "$(/usr/local/bin/mise activate bash)" 2>/dev/null || true\n' > /etc/profile.d/sbx.sh
+RUN printf 'export PATH=/opt/sbx/bin:$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH\nexport MISE_INSTALL_MISSING_TOOLS=1\neval "$(/usr/local/bin/mise activate bash)" 2>/dev/null || true\n' > /etc/profile.d/sbx.sh
 
 # Bundled audit entry point — runs whichever scanners are installed.
 COPY sbx-audit /opt/sbx/bin/sbx-audit
 RUN chmod +x /opt/sbx/bin/sbx-audit
 
 USER dev
-WORKDIR /home/dev
+WORKDIR $USER_HOME
 
 ENV SHELL=/bin/bash \
     MISE_INSTALL_MISSING_TOOLS=1 \
-    PATH=/opt/sbx/bin:/home/dev/.local/bin:/home/dev/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+    PATH=/opt/sbx/bin:$USER_HOME/.local/bin:$USER_HOME/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
 
 CMD ["/bin/bash"]

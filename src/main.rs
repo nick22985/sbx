@@ -37,6 +37,7 @@ fn main() {
                 println!("{f}");
             }
         }
+        Some(Cmd::Migrate) => commands::migrate::run(&cwd()),
         Some(Cmd::Sessions) => commands::sessions::run(),
         Some(Cmd::Config { action }) => dispatch_config(action),
         Some(Cmd::Scan { target }) => {

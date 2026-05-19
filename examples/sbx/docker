@@ -1,8 +1,0 @@
-# Presence of this file enables host docker socket forwarding for the project.
-# Content is ignored — sbx only checks that the file exists.
-#
-# WARNING: mounting the host docker socket grants root-equivalent access to
-# the host. Anything in the container can break out via `docker run --privileged`.
-# Only enable for projects you trust.
-#
-# Toggle with: sbx config docker on  /  sbx config docker off

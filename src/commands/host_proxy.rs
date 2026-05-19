@@ -1,8 +1,8 @@
-use std::fs;
 use std::path::Path;
 
+use crate::config::Config;
 use crate::host_proxy;
-use crate::project::{project_flavor, project_name, sbx_write_dir};
+use crate::project::{project_flavor, project_name};
 use crate::util::{die, log};
 
 pub enum Action<'a> {
@@ -21,17 +21,11 @@ pub fn run(cwd: &Path, action: Action<'_>) {
     match action {
         Action::On => {
             let root = require_project(cwd);
-            let write_dir = sbx_write_dir(&root);
-            let write_file = write_dir.join("host-proxy");
-            if let Err(e) = fs::create_dir_all(&write_dir) {
-                die(format!("mkdir {}: {e}", write_dir.display()));
-            }
-            if !write_file.is_file() {
-                let _ = fs::write(&write_file, "");
-            }
+            let path = Config::edit(&root, |c| c.host_proxy.enabled = true)
+                .unwrap_or_else(|e| die(format!("write config.toml: {e}")));
             log(format!(
                 "host-proxy enabled for this project ({})",
-                write_file.display()
+                path.display()
             ));
             log(format!(
                 "  sandbox env: https_proxy=http://host.docker.internal:{}",
@@ -40,7 +34,7 @@ pub fn run(cwd: &Path, action: Action<'_>) {
             let hosts = host_proxy::read_allowed_hosts(&root);
             if hosts.is_empty() {
                 log(
-                    "  allowlist empty → unrestricted for this project. add hosts with: sbx host-proxy allow <host>",
+                    "  allowlist empty -> unrestricted for this project. add hosts with: sbx host-proxy allow <host>",
                 );
             } else {
                 log(format!("  allowlist: {}", hosts.join(", ")));
@@ -48,9 +42,7 @@ pub fn run(cwd: &Path, action: Action<'_>) {
         }
         Action::Off => {
             let root = require_project(cwd);
-            let write_dir = sbx_write_dir(&root);
-            let write_file = write_dir.join("host-proxy");
-            let _ = fs::remove_file(&write_file);
+            let _ = Config::edit(&root, |c| c.host_proxy.enabled = false);
             host_proxy::remove_project_fragment(&project_name(&root));
             if let Err(e) = host_proxy::apply_config() {
                 log(format!("host-proxy: {e}"));
@@ -66,20 +58,20 @@ pub fn run(cwd: &Path, action: Action<'_>) {
             });
             match project_state {
                 Some((true, hosts)) => {
-                    log("project host-proxy marker: ON");
+                    log("project host-proxy: ON");
                     if hosts.is_empty() {
-                        log("  project allowlist: (empty → unrestricted)");
+                        log("  project allowlist: (empty -> unrestricted)");
                     } else {
                         log(format!("  project allowlist: {}", hosts.join(", ")));
                     }
                 }
-                Some((false, _)) => log("project host-proxy marker: off"),
-                None => log("project host-proxy marker: (not in an sbx project)"),
+                Some((false, _)) => log("project host-proxy: off"),
+                None => log("project host-proxy: (not in an sbx project)"),
             }
             let state = crate::docker::state_line(host_proxy::SIDECAR);
             if host_proxy::sidecar_running() {
                 log(format!(
-                    "host-proxy sidecar: {state} — http://host.docker.internal:{}",
+                    "host-proxy sidecar: {state} - http://host.docker.internal:{}",
                     host_proxy::PORT
                 ));
             } else {
@@ -87,7 +79,7 @@ pub fn run(cwd: &Path, action: Action<'_>) {
             }
             let merged = host_proxy::merged_allowlist();
             if merged.is_empty() {
-                log("  merged allowlist: (empty → sidecar unrestricted)");
+                log("  merged allowlist: (empty -> sidecar unrestricted)");
             } else {
                 log(format!(
                     "  merged allowlist ({}): {}",
@@ -113,7 +105,7 @@ pub fn run(cwd: &Path, action: Action<'_>) {
         }
         Action::Allow(host) => {
             let root = require_project(cwd);
-            ensure_marker(&root);
+            let _ = Config::edit(&root, |c| c.host_proxy.enabled = true);
             match host_proxy::add_allowed_host(&root, host) {
                 Ok(true) => log(format!("added '{host}' to project allowlist")),
                 Ok(false) => log(format!("'{host}' already in project allowlist")),
@@ -134,7 +126,7 @@ pub fn run(cwd: &Path, action: Action<'_>) {
             let root = require_project(cwd);
             let hosts = host_proxy::read_allowed_hosts(&root);
             if hosts.is_empty() {
-                log("project allowlist: (empty → unrestricted)");
+                log("project allowlist: (empty -> unrestricted)");
             } else {
                 for h in hosts {
                     println!("{h}");
@@ -154,19 +146,8 @@ pub fn run(cwd: &Path, action: Action<'_>) {
 
 fn require_project(cwd: &Path) -> std::path::PathBuf {
     let (_, root) = project_flavor(cwd)
-        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
+        .unwrap_or_else(|| die("no .sbx/config.toml here. run 'sbx init <flavor>' first."));
     root
-}
-
-fn ensure_marker(root: &Path) {
-    let write_dir = sbx_write_dir(root);
-    let write_file = write_dir.join("host-proxy");
-    if let Err(e) = fs::create_dir_all(&write_dir) {
-        die(format!("mkdir {}: {e}", write_dir.display()));
-    }
-    if !write_file.is_file() {
-        let _ = fs::write(&write_file, "");
-    }
 }
 
 fn write_fragment_and_apply(root: &Path) {

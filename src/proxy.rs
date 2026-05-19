@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use crate::project::sbx_file;
 use crate::util::{config_dir, die, log, sanitize_tag};
 
 pub const NETWORK: &str = "sbx-proxy-net";
@@ -168,11 +167,13 @@ impl crate::project::WorktreeAdjustable for Route {
 }
 
 pub fn read_routes(project_root: &Path) -> Vec<Route> {
-    let f = sbx_file(project_root, "hostname");
-    let Ok(contents) = std::fs::read_to_string(&f) else {
-        return Vec::new();
-    };
-    let mut routes = parse_routes(&contents);
+    let cfg = crate::config::Config::load_or_default(project_root);
+    let body: String = cfg
+        .hostname
+        .iter()
+        .map(|(h, p)| format!("{h} = {p}\n"))
+        .collect();
+    let mut routes = parse_routes(&body);
     crate::project::apply_worktree_remap(project_root, &mut routes);
     routes
 }
@@ -823,8 +824,11 @@ mod tests {
         let main = root.join("myapp");
         std::fs::create_dir_all(&main).unwrap();
         run_git(&main, &["init", "-q", "-b", "master"]);
-        std::fs::create_dir_all(main.join(".sbx")).unwrap();
-        std::fs::write(main.join(".sbx/hostname"), "app.sbx.localhost = 3000\n").unwrap();
+        crate::config::Config::edit(&main, |c| {
+            c.hostname
+                .insert("app.sbx.localhost".to_string(), 3000);
+        })
+        .unwrap();
         run_git(&main, &["add", "."]);
         run_git(&main, &["commit", "-q", "-m", "init"]);
         let wt = root.join("myapp-wt");
@@ -832,11 +836,7 @@ mod tests {
             &main,
             &["worktree", "add", "-b", "live", wt.to_str().unwrap()],
         );
-        // Pin the worktree's port offset to 0 so tests that aren't about
-        // port-offset behavior see unshifted ports. Dedicated tests below
-        // override this file to exercise the offset path.
-        std::fs::create_dir_all(wt.join(".sbx")).unwrap();
-        std::fs::write(wt.join(".sbx/port-offset"), "0\n").unwrap();
+        crate::config::Config::edit(&wt, |c| c.port_offset = Some(0)).unwrap();
         (main, wt)
     }
 
@@ -857,8 +857,7 @@ mod tests {
     #[test]
     fn read_routes_uses_sbx_name_override() {
         let (_main, wt) = make_repo_with_worktree("name");
-        std::fs::create_dir_all(wt.join(".sbx")).unwrap();
-        std::fs::write(wt.join(".sbx/name"), "exp\n").unwrap();
+        crate::config::Config::edit(&wt, |c| c.name = Some("exp".to_string())).unwrap();
         let routes = read_routes(&wt);
         assert_eq!(routes, vec![route("exp-app.sbx.localhost", 3000)]);
     }
@@ -866,7 +865,7 @@ mod tests {
     #[test]
     fn read_routes_applies_explicit_port_offset() {
         let (_main, wt) = make_repo_with_worktree("offset-explicit");
-        std::fs::write(wt.join(".sbx/port-offset"), "7\n").unwrap();
+        crate::config::Config::edit(&wt, |c| c.port_offset = Some(7)).unwrap();
         let routes = read_routes(&wt);
         assert_eq!(routes, vec![route("live-app.sbx.localhost", 3007)]);
     }
@@ -884,9 +883,9 @@ mod tests {
     #[test]
     fn read_routes_falls_back_to_hashed_offset_for_worktree() {
         let (_main, wt) = make_repo_with_worktree("offset-hashed");
-        // Remove the pinned-0 file the fixture wrote so port_offset falls
+        // Clear the pinned-0 offset the fixture set so port_offset falls
         // back to the hash-derived value for branch `live`.
-        std::fs::remove_file(wt.join(".sbx/port-offset")).unwrap();
+        crate::config::Config::edit(&wt, |c| c.port_offset = None).unwrap();
         let routes = read_routes(&wt);
         assert_eq!(routes.len(), 1);
         let r = &routes[0];

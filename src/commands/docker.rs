@@ -1,8 +1,8 @@
-use std::fs;
 use std::path::Path;
 
+use crate::config::Config;
 use crate::docker::{host_docker_socket, project_docker_enabled};
-use crate::project::{project_flavor, sbx_write_dir};
+use crate::project::project_flavor;
 use crate::util::{die, log};
 
 pub enum Action {
@@ -13,27 +13,21 @@ pub enum Action {
 
 pub fn run(cwd: &Path, action: Action) {
     let (_, root) = project_flavor(cwd)
-        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
-    let write_dir = sbx_write_dir(&root);
-    let write_file = write_dir.join("docker");
+        .unwrap_or_else(|| die("no .sbx/config.toml here. run 'sbx init <flavor>' first."));
     match action {
         Action::On => {
-            if let Err(e) = fs::create_dir_all(&write_dir) {
-                die(format!("mkdir {}: {e}", write_dir.display()));
-            }
-            if !write_file.is_file() {
-                let _ = fs::write(&write_file, "");
-            }
+            let path = Config::edit(&root, |c| c.docker = true)
+                .unwrap_or_else(|e| die(format!("write config.toml: {e}")));
             log(format!(
                 "docker socket forwarding enabled for this project ({})",
-                write_file.display()
+                path.display()
             ));
             log(
                 "WARNING: mounting the host docker socket grants root-equivalent access to the host. anything in the container can break out via `docker run --privileged`.",
             );
         }
         Action::Off => {
-            let _ = fs::remove_file(&write_file);
+            let _ = Config::edit(&root, |c| c.docker = false);
             log("docker socket forwarding disabled");
         }
         Action::Status => {

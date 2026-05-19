@@ -3,7 +3,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::project::{project_name, sbx_file};
+use crate::project::project_name;
 use crate::util::{confirm, die, home_dir, log};
 
 pub const FORWARDED_VARS: &[&str] = &[
@@ -22,26 +22,6 @@ pub fn image_exists(image: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
-}
-
-pub fn image_created_secs(image: &str) -> Option<u64> {
-    let out = Command::new("docker")
-        .args(["image", "inspect", image, "--format", "{{.Created}}"])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    parse_docker_time(&raw)
-}
-
-fn parse_docker_time(s: &str) -> Option<u64> {
-    let out = Command::new("date").args(["-d", s, "+%s"]).output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
 pub fn stdio_is_tty() -> bool {
@@ -239,14 +219,9 @@ impl PortSpec {
     pub fn from_project(project_root: &Path) -> Self {
         let mut seen = std::collections::BTreeSet::new();
         let mut ports = Vec::new();
-        let ports_file = sbx_file(project_root, "ports");
-        if let Ok(contents) = std::fs::read_to_string(&ports_file) {
-            for raw in contents.lines() {
-                if let Some(p) = parse_port_line(raw)
-                    && seen.insert(p)
-                {
-                    ports.push(p);
-                }
+        for p in crate::config::Config::load_or_default(project_root).ports {
+            if seen.insert(p) {
+                ports.push(p);
             }
         }
         if let Ok(extra) = std::env::var("SBX_PORTS") {
@@ -348,18 +323,15 @@ pub fn worktree_mount_args(project_root: &Path) -> Vec<String> {
 }
 
 pub fn project_ssh_enabled(project_root: &Path) -> bool {
-    let f = sbx_file(project_root, "ssh");
-    f.is_file()
+    crate::config::Config::load_or_default(project_root).ssh
 }
 
 pub fn project_docker_enabled(project_root: &Path) -> bool {
-    let f = sbx_file(project_root, "docker");
-    f.is_file()
+    crate::config::Config::load_or_default(project_root).docker
 }
 
 pub fn project_gui_enabled(project_root: &Path) -> bool {
-    let f = sbx_file(project_root, "gui");
-    f.is_file()
+    crate::config::Config::load_or_default(project_root).gui
 }
 
 pub fn gui_mount_args(project_root: &Path) -> Vec<String> {
@@ -711,7 +683,7 @@ pub fn run_container(spec: RunSpec<'_>) -> i32 {
         .iter()
         .map(|m| m.container.clone())
         .collect();
-    let cache = crate::flavor::cache_args(spec.flavor, Some(spec.project_root));
+    let cache = crate::flavor::cache_args(spec.flavor, Some(spec.project_root), &spec.container_home);
     let mut i = 0;
     while i < cache.len() {
         if cache[i] == "-v"
@@ -802,4 +774,37 @@ pub fn exec_into(container: &str, project_root: &Path, entry: &[String]) -> io::
     }
     log(format!("attaching to running container: {container}"));
     cmd.exec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_port_line_accepts_plain_number() {
+        assert_eq!(parse_port_line("8080"), Some(8080));
+    }
+
+    #[test]
+    fn parse_port_line_strips_comment_and_whitespace() {
+        assert_eq!(parse_port_line("  9090  # web "), Some(9090));
+    }
+
+    #[test]
+    fn parse_port_line_returns_none_for_blank_or_comment_only() {
+        assert_eq!(parse_port_line(""), None);
+        assert_eq!(parse_port_line("# only comment"), None);
+        assert_eq!(parse_port_line("   "), None);
+    }
+
+    #[test]
+    fn parse_port_line_returns_none_for_out_of_range() {
+        assert_eq!(parse_port_line("99999"), None);
+        assert_eq!(parse_port_line("-1"), None);
+    }
+
+    #[test]
+    fn parse_port_line_returns_none_for_non_numeric() {
+        assert_eq!(parse_port_line("eighty"), None);
+    }
 }

@@ -1,7 +1,7 @@
-use std::fs;
 use std::path::Path;
 
-use crate::project::{project_flavor, sbx_file, sbx_write_dir};
+use crate::config::Config;
+use crate::project::project_flavor;
 use crate::util::{die, log};
 
 pub enum Action<'a> {
@@ -12,53 +12,29 @@ pub enum Action<'a> {
 
 pub fn run(cwd: &Path, action: Action<'_>) {
     let (_, root) = project_flavor(cwd)
-        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
-    let read_file = sbx_file(&root, "start");
-    let write_dir = sbx_write_dir(&root);
-    let write_file = write_dir.join("start");
-
+        .unwrap_or_else(|| die("no .sbx/config.toml here. run 'sbx init <flavor>' first."));
     match action {
-        Action::Show => {
-            if !read_file.is_file() {
-                log("no start file");
-                return;
-            }
-            log(format!("from {}:", read_file.display()));
-            let content = fs::read_to_string(&read_file).unwrap_or_default();
-            print!("{content}");
-            if !content.ends_with('\n') {
-                println!();
-            }
-        }
+        Action::Show => match Config::load_or_default(&root).start {
+            Some(s) if !s.trim().is_empty() => println!("{s}"),
+            _ => log("no start command configured"),
+        },
         Action::Set(cmd) => {
             if cmd.is_empty() {
                 die("usage: sbx start set <command...>");
             }
-            if let Err(e) = fs::create_dir_all(&write_dir) {
-                die(format!("mkdir {}: {e}", write_dir.display()));
-            }
             let joined = cmd.join(" ");
-            if let Err(e) = fs::write(&write_file, format!("{joined}\n")) {
-                die(format!("write {}: {e}", write_file.display()));
-            }
-            log(format!("wrote {}: {joined}", write_file.display()));
+            let path = Config::edit(&root, |c| c.start = Some(joined.clone()))
+                .unwrap_or_else(|e| die(format!("write config.toml: {e}")));
+            log(format!("set start in {}: {joined}", path.display()));
         }
         Action::Clear => {
-            let target = if write_file.is_file() {
-                Some(write_file.clone())
-            } else if read_file.is_file() {
-                Some(read_file.clone())
+            let had = Config::load_or_default(&root).start.is_some();
+            let path = Config::edit(&root, |c| c.start = None)
+                .unwrap_or_else(|e| die(format!("write config.toml: {e}")));
+            if had {
+                log(format!("cleared start in {}", path.display()));
             } else {
-                None
-            };
-            match target {
-                Some(p) => {
-                    if let Err(e) = fs::remove_file(&p) {
-                        die(format!("remove {}: {e}", p.display()));
-                    }
-                    log(format!("removed {}", p.display()));
-                }
-                None => log("no start file"),
+                log("no start command configured");
             }
         }
     }
@@ -66,15 +42,8 @@ pub fn run(cwd: &Path, action: Action<'_>) {
 
 pub fn write_raw(cwd: &Path, raw: &str) {
     let (_, root) = project_flavor(cwd)
-        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
-    let write_dir = sbx_write_dir(&root);
-    let write_file = write_dir.join("start");
-    if let Err(e) = fs::create_dir_all(&write_dir) {
-        die(format!("mkdir {}: {e}", write_dir.display()));
-    }
-    let body = format!("{raw}\n");
-    if let Err(e) = fs::write(&write_file, &body) {
-        die(format!("write {}: {e}", write_file.display()));
-    }
-    log(format!("wrote {}: {raw}", write_file.display()));
+        .unwrap_or_else(|| die("no .sbx/config.toml here. run 'sbx init <flavor>' first."));
+    let path = Config::edit(&root, |c| c.start = Some(raw.to_string()))
+        .unwrap_or_else(|e| die(format!("write config.toml: {e}")));
+    log(format!("set start in {}: {raw}", path.display()));
 }

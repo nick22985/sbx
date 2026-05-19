@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::config::Config;
 use crate::flavor::{nix_gid, nix_uid};
-use crate::project::sbx_file;
 use crate::util::{config_dir, die, log};
 
 pub const SIDECAR: &str = "sbx-public";
@@ -48,31 +48,13 @@ impl crate::project::WorktreeAdjustable for PublicRoute {
 }
 
 pub fn read_public(root: &Path) -> Vec<PublicRoute> {
-    let p = sbx_file(root, "public");
-    let body = std::fs::read_to_string(&p).unwrap_or_default();
-    let mut routes = parse_public(&body);
+    let mut routes: Vec<PublicRoute> = Config::load_or_default(root)
+        .public
+        .into_iter()
+        .map(|(hostname, port)| PublicRoute { hostname, port })
+        .collect();
     crate::project::apply_worktree_remap(root, &mut routes);
     routes
-}
-
-pub fn parse_public(body: &str) -> Vec<PublicRoute> {
-    let mut out = Vec::new();
-    for line in crate::util::config_lines(body) {
-        let Some((lhs, rhs)) = line.split_once('=') else {
-            continue;
-        };
-        let host = lhs.trim();
-        let port = rhs.trim();
-        if host.is_empty() {
-            continue;
-        }
-        let Ok(p) = port.parse::<u16>() else { continue };
-        out.push(PublicRoute {
-            hostname: host.to_string(),
-            port: p,
-        });
-    }
-    out
 }
 
 fn user_arg() -> String {
@@ -374,17 +356,6 @@ fn running_sbx_project_names() -> Option<HashSet<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn parses_basic() {
-        let r = parse_public(
-            "app.example.com = 8080\napi.example.com=1337  # comment\n# full\n\nbad\n=80\n",
-        );
-        assert_eq!(r.len(), 2);
-        assert_eq!(r[0].hostname, "app.example.com");
-        assert_eq!(r[0].port, 8080);
-        assert_eq!(r[1].hostname, "api.example.com");
-        assert_eq!(r[1].port, 1337);
-    }
 
     #[test]
     fn renders_config_yml_fragment() {

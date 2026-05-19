@@ -201,3 +201,81 @@ fn tempfile_in_same_dir(path: &Path) -> io::Result<Tmp> {
         file: f,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn tmp_file(label: &str, body: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let pid = std::process::id();
+        let p = std::env::temp_dir().join(format!("sbx-env-{label}-{pid}-{nanos}"));
+        fs::write(&p, body).unwrap();
+        p
+    }
+
+    #[test]
+    fn is_valid_name_accepts_letters_underscore_digits() {
+        assert!(is_valid_name("FOO"));
+        assert!(is_valid_name("_foo_bar"));
+        assert!(is_valid_name("X1"));
+    }
+
+    #[test]
+    fn is_valid_name_rejects_leading_digit_and_empty() {
+        assert!(!is_valid_name(""));
+        assert!(!is_valid_name("1FOO"));
+        assert!(!is_valid_name("FOO-BAR"));
+        assert!(!is_valid_name("FOO BAR"));
+    }
+
+    #[test]
+    fn parse_env_file_strips_export_and_quotes() {
+        let p = tmp_file(
+            "exp",
+            "export FOO=bar\nQUOTED=\"hello world\"\nSQ='single'\n",
+        );
+        let entries = parse_env_file(&p);
+        let map: std::collections::HashMap<_, _> =
+            entries.into_iter().map(|e| (e.key, e.value)).collect();
+        assert_eq!(map.get("FOO").unwrap(), "bar");
+        assert_eq!(map.get("QUOTED").unwrap(), "hello world");
+        assert_eq!(map.get("SQ").unwrap(), "single");
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn parse_env_file_skips_comments_blanks_and_invalid_names() {
+        let p = tmp_file(
+            "bad",
+            "# comment\n\n1BAD=value\nGOOD=ok\nno_equals_line\n",
+        );
+        let entries = parse_env_file(&p);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key, "GOOD");
+        assert_eq!(entries[0].value, "ok");
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn parse_env_file_returns_empty_when_missing() {
+        let entries = parse_env_file(Path::new("/nonexistent/sbx/env-missing"));
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn mask_value_redacts_sensitive_keys() {
+        assert_eq!(mask_value("API_KEY", "abcdefgh"), "ab****gh");
+        assert_eq!(mask_value("PASSWORD", "abcd"), "****");
+        assert_eq!(mask_value("MY_SECRET_TOKEN", "longerthanfour"), "lo****ur");
+    }
+
+    #[test]
+    fn mask_value_passes_through_non_sensitive_keys() {
+        assert_eq!(mask_value("HOSTNAME", "myhost"), "myhost");
+    }
+}

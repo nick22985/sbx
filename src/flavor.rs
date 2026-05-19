@@ -7,12 +7,13 @@ use std::thread;
 
 use std::collections::HashMap;
 
+use crate::config::{Config, FlavorConfig, GlobalConfig};
 use crate::docker;
 use crate::project::{project_base_name, sbx_file};
-use crate::util::{config_dir, die, home_dir, log};
+use crate::util::{config_dir, die, flavors_dir, home_dir, log};
 
 pub fn flavor_dir(flavor: &str) -> PathBuf {
-    config_dir().join(flavor)
+    flavors_dir().join(flavor)
 }
 
 pub const INTERNAL_FLAVORS: &[&str] = &["base", "claude"];
@@ -32,7 +33,7 @@ pub fn is_flavor(name: &str) -> bool {
 }
 
 pub fn list_all_flavors() -> Vec<String> {
-    let dir = config_dir();
+    let dir = flavors_dir();
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir(&dir) else {
         return out;
@@ -82,17 +83,18 @@ impl CacheEntry {
     }
 }
 
-fn parse_caches_body(body: &str) -> Vec<CacheEntry> {
+fn parse_cache_lines<S: AsRef<str>>(lines: &[S], container_home: &Path) -> Vec<CacheEntry> {
     let mut out = Vec::new();
-    for raw in body.lines() {
-        let line = raw.split('#').next().unwrap_or("").trim();
+    for raw in lines {
+        let line = raw.as_ref().split('#').next().unwrap_or("").trim();
         if line.is_empty() {
             continue;
         }
         if let Some(rest) = line.strip_prefix('@') {
             let Some((name, container)) = rest.split_once(':') else {
                 log(format!(
-                    "ignoring malformed volume cache line (need @name:/container): {raw}"
+                    "ignoring malformed volume cache line (need @name:/container): {}",
+                    raw.as_ref()
                 ));
                 continue;
             };
@@ -106,7 +108,10 @@ fn parse_caches_body(body: &str) -> Vec<CacheEntry> {
         }
         let (host_rel, container) = match line.split_once(':') {
             Some((h, c)) => (h.trim().to_string(), c.trim().to_string()),
-            None => (line.to_string(), format!("/home/dev/{line}")),
+            None => (
+                line.to_string(),
+                container_home.join(line).display().to_string(),
+            ),
         };
         if host_rel.is_empty() || container.is_empty() {
             continue;
@@ -119,23 +124,16 @@ fn parse_caches_body(body: &str) -> Vec<CacheEntry> {
     out
 }
 
-fn read_caches_file(path: &Path) -> Vec<CacheEntry> {
-    match fs::read_to_string(path) {
-        Ok(body) => parse_caches_body(&body),
-        Err(_) => Vec::new(),
-    }
+fn flavor_cache_entries(flavor: &str, container_home: &Path) -> Vec<CacheEntry> {
+    parse_cache_lines(&FlavorConfig::load_or_default(flavor).caches, container_home)
 }
 
-fn flavor_cache_entries(flavor: &str) -> Vec<CacheEntry> {
-    read_caches_file(&flavor_dir(flavor).join("caches"))
+fn user_global_cache_entries(container_home: &Path) -> Vec<CacheEntry> {
+    parse_cache_lines(&GlobalConfig::load_or_default().caches, container_home)
 }
 
-fn user_global_cache_entries() -> Vec<CacheEntry> {
-    read_caches_file(&config_dir().join("caches"))
-}
-
-fn project_cache_entries(project_root: &Path) -> Vec<CacheEntry> {
-    read_caches_file(&sbx_file(project_root, "caches"))
+fn project_cache_entries(project_root: &Path, container_home: &Path) -> Vec<CacheEntry> {
+    parse_cache_lines(&Config::load_or_default(project_root).caches, container_home)
 }
 
 fn merge_cache_layers(layers: &[Vec<CacheEntry>]) -> Vec<CacheEntry> {
@@ -156,25 +154,51 @@ fn merge_cache_layers(layers: &[Vec<CacheEntry>]) -> Vec<CacheEntry> {
     out
 }
 
-fn effective_cache_entries(flavor: &str, project_root: Option<&Path>) -> Vec<CacheEntry> {
-    let mut layers = vec![flavor_cache_entries(flavor), user_global_cache_entries()];
+fn effective_cache_entries(
+    flavor: &str,
+    project_root: Option<&Path>,
+    container_home: &Path,
+) -> Vec<CacheEntry> {
+    let mut layers = vec![
+        flavor_cache_entries(flavor, container_home),
+        user_global_cache_entries(container_home),
+    ];
     if let Some(root) = project_root {
-        layers.push(project_cache_entries(root));
+        layers.push(project_cache_entries(root, container_home));
     }
     merge_cache_layers(&layers)
 }
 
-pub fn cache_args(flavor: &str, project_root: Option<&Path>) -> Vec<String> {
+pub fn flavor_container_home(_flavor: &str) -> PathBuf {
+    container_home()
+}
+
+pub fn container_home() -> PathBuf {
+    match GlobalConfig::load_or_default().container_home {
+        Some(s) if !s.trim().is_empty() => PathBuf::from(s.trim()),
+        _ => home_dir(),
+    }
+}
+
+pub fn cache_args(
+    flavor: &str,
+    project_root: Option<&Path>,
+    container_home: &Path,
+) -> Vec<String> {
     let mut out = Vec::new();
     if flavor != "claude" {
         out.push("-v".into());
-        out.push(format!("sbx-mise-{flavor}:/home/dev/.local/share/mise"));
+        out.push(format!(
+            "sbx-mise-{flavor}:{}/.local/share/mise",
+            container_home.display()
+        ));
         out.push("-v".into());
         out.push(format!(
-            "sbx-mise-state-{flavor}:/home/dev/.local/state/mise"
+            "sbx-mise-state-{flavor}:{}/.local/state/mise",
+            container_home.display()
         ));
     }
-    for entry in effective_cache_entries(flavor, project_root) {
+    for entry in effective_cache_entries(flavor, project_root, container_home) {
         match entry {
             CacheEntry::HostBind {
                 host_rel,
@@ -193,7 +217,10 @@ pub fn cache_args(flavor: &str, project_root: Option<&Path>) -> Vec<String> {
     }
     if flavor == "claude" {
         out.push("-v".into());
-        out.push("sbx-claude-local:/home/dev/.local".into());
+        out.push(format!(
+            "sbx-claude-local:{}/.local",
+            container_home.display()
+        ));
     }
     out
 }
@@ -207,7 +234,8 @@ pub fn flavor_volumes(flavor: &str) -> Vec<String> {
         v.push(format!("sbx-mise-{flavor}"));
         v.push(format!("sbx-mise-state-{flavor}"));
     }
-    for entry in flavor_cache_entries(flavor) {
+    let container_home = flavor_container_home(flavor);
+    for entry in flavor_cache_entries(flavor, &container_home) {
         if let CacheEntry::Volume { name, .. } = entry {
             v.push(name);
         }
@@ -248,16 +276,72 @@ pub fn flavor_context_max_mtime(flavor: &str) -> u64 {
     max
 }
 
+fn build_stamps_dir() -> PathBuf {
+    config_dir().join("build-stamps")
+}
+
+fn sanitize_stamp_key(key: &str) -> String {
+    key.chars()
+        .map(|c| match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => c,
+            _ => '_',
+        })
+        .collect()
+}
+
+fn build_stamp_path(stamp_key: &str) -> PathBuf {
+    build_stamps_dir().join(sanitize_stamp_key(stamp_key))
+}
+
+fn write_build_stamp(stamp_key: &str) {
+    let path = build_stamp_path(stamp_key);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Err(e) = fs::write(&path, b"") {
+        log(format!(
+            "failed to write build stamp {}: {e}",
+            path.display()
+        ));
+    }
+}
+
+fn read_build_stamp_secs(stamp_key: &str) -> Option<u64> {
+    mtime_secs(&build_stamp_path(stamp_key))
+}
+
 pub fn image_up_to_date(flavor: &str) -> bool {
     let img = image_name(flavor);
     if !docker::image_exists(&img) {
         return false;
     }
-    let img_mt = match docker::image_created_secs(&img) {
+    let img_mt = match read_build_stamp_secs(flavor) {
         Some(t) => t,
         None => return false,
     };
     let mut max_ctx = flavor_context_max_mtime(flavor);
+    if flavor_depends_on_base(flavor) {
+        let base_mt = flavor_context_max_mtime(BASE_FLAVOR);
+        if base_mt > max_ctx {
+            max_ctx = base_mt;
+        }
+    }
+    img_mt >= max_ctx
+}
+
+fn project_image_up_to_date(flavor: &str, _project_root: &Path, project_df: &Path, img: &str) -> bool {
+    if !docker::image_exists(img) {
+        return false;
+    }
+    let img_mt = match read_build_stamp_secs(img) {
+        Some(t) => t,
+        None => return false,
+    };
+    let mut max_ctx = mtime_secs(project_df).unwrap_or(0);
+    let flavor_mt = flavor_context_max_mtime(flavor);
+    if flavor_mt > max_ctx {
+        max_ctx = flavor_mt;
+    }
     if flavor_depends_on_base(flavor) {
         let base_mt = flavor_context_max_mtime(BASE_FLAVOR);
         if base_mt > max_ctx {
@@ -278,6 +362,7 @@ fn build_cmd(flavor: &str, no_cache: bool) -> Result<(Command, String, PathBuf),
     let tag = image_name(flavor);
     let uid = nix_uid();
     let gid = nix_gid();
+    let user_home = flavor_container_home(flavor).display().to_string();
     let mut cmd = Command::new("docker");
     cmd.args(["buildx", "build", "--load"]);
     let builder = std::env::var("SBX_BUILDX_BUILDER").unwrap_or_else(|_| "default".into());
@@ -292,6 +377,8 @@ fn build_cmd(flavor: &str, no_cache: bool) -> Result<(Command, String, PathBuf),
         &format!("USER_UID={uid}"),
         "--build-arg",
         &format!("USER_GID={gid}"),
+        "--build-arg",
+        &format!("USER_HOME={user_home}"),
         "-t",
         &tag,
     ])
@@ -312,6 +399,7 @@ pub fn build_image(flavor: &str, no_cache: bool) {
     if !status.success() {
         die("docker build failed");
     }
+    write_build_stamp(flavor);
 }
 
 pub fn build_image_streamed(
@@ -351,15 +439,16 @@ pub fn build_image_streamed(
     if !status.success() {
         return Err(format!("docker build failed for {flavor}"));
     }
+    write_build_stamp(flavor);
     Ok(())
 }
 
 pub fn resolve_image(flavor: &str, project_root: &Path, no_cache: bool) -> String {
-    if flavor_depends_on_base(flavor) && !docker::image_exists(&image_name(BASE_FLAVOR)) {
+    if flavor_depends_on_base(flavor) && !image_up_to_date(BASE_FLAVOR) {
         build_image(BASE_FLAVOR, false);
     }
     let base = image_name(flavor);
-    if !docker::image_exists(&base) {
+    if !image_up_to_date(flavor) {
         build_image(flavor, false);
     }
 
@@ -369,13 +458,7 @@ pub fn resolve_image(flavor: &str, project_root: &Path, no_cache: bool) -> Strin
     }
 
     let img = project_image_tag(flavor, project_root);
-    let needs_build = if !docker::image_exists(&img) {
-        true
-    } else {
-        let df_mtime = mtime_secs(&project_df).unwrap_or(0);
-        let img_mtime = docker::image_created_secs(&img).unwrap_or(0);
-        df_mtime > img_mtime
-    };
+    let needs_build = !project_image_up_to_date(flavor, project_root, &project_df, &img);
     if no_cache || needs_build {
         log(format!(
             "building project image {img} from {}",
@@ -383,6 +466,7 @@ pub fn resolve_image(flavor: &str, project_root: &Path, no_cache: bool) -> Strin
         ));
         let uid = nix_uid();
         let gid = nix_gid();
+        let user_home = home_dir().display().to_string();
         let mut cmd = Command::new("docker");
         cmd.args(["buildx", "build", "--load"]);
         let builder = std::env::var("SBX_BUILDX_BUILDER").unwrap_or_else(|_| "default".into());
@@ -397,6 +481,8 @@ pub fn resolve_image(flavor: &str, project_root: &Path, no_cache: bool) -> Strin
             &format!("USER_UID={uid}"),
             "--build-arg",
             &format!("USER_GID={gid}"),
+            "--build-arg",
+            &format!("USER_HOME={user_home}"),
             "-t",
             &img,
             "-f",
@@ -407,6 +493,7 @@ pub fn resolve_image(flavor: &str, project_root: &Path, no_cache: bool) -> Strin
         if !status.success() {
             die("docker build failed");
         }
+        write_build_stamp(&img);
     }
     img
 }
@@ -438,9 +525,13 @@ mod libc_compat {
 mod tests {
     use super::*;
 
+    fn dev_home() -> PathBuf {
+        PathBuf::from("/home/dev")
+    }
+
     #[test]
     fn parses_bare_host_rel_defaults_container_under_home_dev() {
-        let entries = parse_caches_body(".npm\n");
+        let entries = parse_cache_lines(&[".npm"], &dev_home());
         assert_eq!(
             entries,
             vec![CacheEntry::HostBind {
@@ -452,7 +543,7 @@ mod tests {
 
     #[test]
     fn parses_explicit_container_path() {
-        let entries = parse_caches_body(".m2:/home/dev/.m2\n");
+        let entries = parse_cache_lines(&[".m2:/home/dev/.m2"], &dev_home());
         assert_eq!(
             entries,
             vec![CacheEntry::HostBind {
@@ -464,7 +555,7 @@ mod tests {
 
     #[test]
     fn parses_named_volume() {
-        let entries = parse_caches_body("@sbx-maven-cache:/home/dev/.m2\n");
+        let entries = parse_cache_lines(&["@sbx-maven-cache:/home/dev/.m2"], &dev_home());
         assert_eq!(
             entries,
             vec![CacheEntry::Volume {
@@ -476,21 +567,21 @@ mod tests {
 
     #[test]
     fn strips_comments_and_blanks() {
-        let entries = parse_caches_body("# comment\n\n.npm  # trailing\n");
+        let entries = parse_cache_lines(&["# comment", "", ".npm  # trailing"], &dev_home());
         assert_eq!(entries.len(), 1);
         assert!(matches!(&entries[0], CacheEntry::HostBind { host_rel, .. } if host_rel == ".npm"));
     }
 
     #[test]
     fn malformed_volume_line_skipped() {
-        let entries = parse_caches_body("@bad-no-colon\n.npm\n");
+        let entries = parse_cache_lines(&["@bad-no-colon", ".npm"], &dev_home());
         assert_eq!(entries.len(), 1);
     }
 
     #[test]
     fn user_entry_overrides_flavor_on_same_container_path() {
-        let flavor = parse_caches_body("@sbx-maven-cache:/home/dev/.m2\n");
-        let user = parse_caches_body("@sbx-maven-mine:/home/dev/.m2\n");
+        let flavor = parse_cache_lines(&["@sbx-maven-cache:/home/dev/.m2"], &dev_home());
+        let user = parse_cache_lines(&["@sbx-maven-mine:/home/dev/.m2"], &dev_home());
         let merged = merge_cache_layers(&[flavor, user]);
         assert_eq!(
             merged,
@@ -503,8 +594,8 @@ mod tests {
 
     #[test]
     fn host_bind_overrides_volume_on_same_container_path() {
-        let flavor = parse_caches_body("@sbx-maven-cache:/home/dev/.m2\n");
-        let user = parse_caches_body(".m2:/home/dev/.m2\n");
+        let flavor = parse_cache_lines(&["@sbx-maven-cache:/home/dev/.m2"], &dev_home());
+        let user = parse_cache_lines(&[".m2:/home/dev/.m2"], &dev_home());
         let merged = merge_cache_layers(&[flavor, user]);
         assert_eq!(
             merged,
@@ -517,9 +608,9 @@ mod tests {
 
     #[test]
     fn distinct_container_paths_layer_additively() {
-        let flavor = parse_caches_body(".npm\n");
-        let global = parse_caches_body(".cargo/registry\n");
-        let project = parse_caches_body(".gradle\n");
+        let flavor = parse_cache_lines(&[".npm"], &dev_home());
+        let global = parse_cache_lines(&[".cargo/registry"], &dev_home());
+        let project = parse_cache_lines(&[".gradle"], &dev_home());
         let merged = merge_cache_layers(&[flavor, global, project]);
         assert_eq!(merged.len(), 3);
         let containers: Vec<&str> = merged.iter().map(|e| e.container()).collect();
@@ -534,10 +625,23 @@ mod tests {
     }
 
     #[test]
+    fn bare_host_rel_resolves_under_host_home_when_set() {
+        let host_home = PathBuf::from("/home/nick");
+        let entries = parse_cache_lines(&[".local/share/nvim"], &host_home);
+        assert_eq!(
+            entries,
+            vec![CacheEntry::HostBind {
+                host_rel: ".local/share/nvim".into(),
+                container: "/home/nick/.local/share/nvim".into(),
+            }]
+        );
+    }
+
+    #[test]
     fn project_layer_overrides_global_layer() {
-        let flavor = parse_caches_body("");
-        let global = parse_caches_body("@globalvol:/home/dev/x\n");
-        let project = parse_caches_body("@projectvol:/home/dev/x\n");
+        let flavor: Vec<CacheEntry> = parse_cache_lines::<&str>(&[], &dev_home());
+        let global = parse_cache_lines(&["@globalvol:/home/dev/x"], &dev_home());
+        let project = parse_cache_lines(&["@projectvol:/home/dev/x"], &dev_home());
         let merged = merge_cache_layers(&[flavor, global, project]);
         assert_eq!(
             merged,
@@ -546,5 +650,143 @@ mod tests {
                 container: "/home/dev/x".into(),
             }]
         );
+    }
+
+    use crate::util::set_test_paths;
+
+    fn tmp_dir(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let pid = std::process::id();
+        let path = std::env::temp_dir().join(format!("sbx-flavor-{label}-{pid}-{nanos}"));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn container_home_defaults_to_host_home() {
+        let cfg = tmp_dir("ch-default-cfg");
+        let home = tmp_dir("ch-default-home");
+        let home_clone = home.clone();
+        let _g = set_test_paths(cfg, home);
+        assert_eq!(container_home(), home_clone);
+        assert_eq!(flavor_container_home("rust"), home_clone);
+    }
+
+    #[test]
+    fn container_home_uses_global_config_override() {
+        let cfg = tmp_dir("ch-override-cfg");
+        let home = tmp_dir("ch-override-home");
+        let _g = set_test_paths(cfg, home);
+        GlobalConfig {
+            container_home: Some("/opt/dev".into()),
+            ..Default::default()
+        }
+        .save()
+        .unwrap();
+        assert_eq!(container_home(), PathBuf::from("/opt/dev"));
+        assert_eq!(flavor_container_home("rust"), PathBuf::from("/opt/dev"));
+    }
+
+    #[test]
+    fn container_home_treats_blank_override_as_unset() {
+        let cfg = tmp_dir("ch-blank-cfg");
+        let home = tmp_dir("ch-blank-home");
+        let home_clone = home.clone();
+        let _g = set_test_paths(cfg, home);
+        GlobalConfig {
+            container_home: Some("   ".into()),
+            ..Default::default()
+        }
+        .save()
+        .unwrap();
+        assert_eq!(container_home(), home_clone);
+    }
+
+    #[test]
+    fn cache_args_mise_volumes_use_container_home() {
+        let cfg = tmp_dir("ca-mise-cfg");
+        let home = tmp_dir("ca-mise-home");
+        let _g = set_test_paths(cfg, home);
+        let container_home = PathBuf::from("/home/nick");
+        let args = cache_args("rust", None, &container_home);
+        assert!(args.windows(2).any(|w| w[0] == "-v"
+            && w[1] == "sbx-mise-rust:/home/nick/.local/share/mise"));
+        assert!(args.windows(2).any(|w| w[0] == "-v"
+            && w[1] == "sbx-mise-state-rust:/home/nick/.local/state/mise"));
+    }
+
+    #[test]
+    fn cache_args_skips_mise_volumes_for_claude_flavor() {
+        let cfg = tmp_dir("ca-claude-cfg");
+        let home = tmp_dir("ca-claude-home");
+        let _g = set_test_paths(cfg, home);
+        let args = cache_args("claude", None, &PathBuf::from("/home/dev"));
+        assert!(!args.iter().any(|a| a.starts_with("sbx-mise-")));
+        assert!(args.windows(2).any(|w| w[0] == "-v"
+            && w[1] == "sbx-claude-local:/home/dev/.local"));
+    }
+
+    #[test]
+    fn flavor_context_max_mtime_returns_zero_for_missing_dir() {
+        let cfg = tmp_dir("ctx-missing-cfg");
+        let home = tmp_dir("ctx-missing-home");
+        let _g = set_test_paths(cfg, home);
+        assert_eq!(flavor_context_max_mtime("does-not-exist"), 0);
+    }
+
+    #[test]
+    fn build_stamp_roundtrip_records_mtime() {
+        let cfg = tmp_dir("stamp-cfg");
+        let home = tmp_dir("stamp-home");
+        let _g = set_test_paths(cfg, home);
+        assert!(read_build_stamp_secs("rust").is_none());
+        write_build_stamp("rust");
+        let mt = read_build_stamp_secs("rust").expect("stamp should exist");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(mt <= now && now - mt < 5);
+    }
+
+    #[test]
+    fn build_stamp_path_sanitizes_unsafe_characters() {
+        let cfg = tmp_dir("stamp-sanitize-cfg");
+        let home = tmp_dir("stamp-sanitize-home");
+        let _g = set_test_paths(cfg, home);
+        let p = build_stamp_path("sbx-rust-myapp:latest");
+        let name = p.file_name().unwrap().to_string_lossy();
+        assert_eq!(name, "sbx-rust-myapp_latest");
+    }
+
+    #[test]
+    fn flavor_context_max_mtime_picks_max_across_nested_files() {
+        let cfg = tmp_dir("ctx-nested-cfg");
+        let home = tmp_dir("ctx-nested-home");
+        let _g = set_test_paths(cfg.clone(), home);
+        let fdir = cfg.join("flavors").join("demo");
+        fs::create_dir_all(fdir.join("sub")).unwrap();
+        fs::write(fdir.join("Dockerfile"), "FROM x").unwrap();
+        fs::write(fdir.join("sub/extra"), "data").unwrap();
+        let mt = flavor_context_max_mtime("demo");
+        assert!(mt > 0);
+        let df_mt = fs::metadata(fdir.join("Dockerfile"))
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let sub_mt = fs::metadata(fdir.join("sub/extra"))
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert_eq!(mt, df_mt.max(sub_mt));
     }
 }

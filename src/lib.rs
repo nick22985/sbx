@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod cloudflare;
 pub mod commands;
+pub mod config;
 pub mod docker;
 pub mod env_file;
 pub mod flavor;

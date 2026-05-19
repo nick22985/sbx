@@ -1,6 +1,0 @@
-# Host paths to bind into the sandbox so caches and credentials survive runs.
-# Syntax:
-#   <host_rel_to_home>                   # container side defaults to /home/dev/<host_rel>
-#   <host_rel_to_home>:<container_path>
-# Lines beginning with `#` are comments.
-.bun/install/cache

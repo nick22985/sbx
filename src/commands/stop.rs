@@ -9,7 +9,7 @@ use crate::util::{die, log};
 use crate::vpn::{self, project_vpn_spec, sidecar_name};
 
 pub fn run(cwd: &Path) {
-    let (flavor, root) = project_flavor(cwd).unwrap_or_else(|| die("no .sbx/flavor here."));
+    let (flavor, root) = project_flavor(cwd).unwrap_or_else(|| die("no .sbx/config.toml here."));
     let pname = project_name(&root);
     let out = Command::new("docker")
         .args([

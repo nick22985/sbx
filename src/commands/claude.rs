@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::docker::{self, Network, PortSpec, RunSpec};
 use crate::flavor::{build_image, image_exists_or_build, image_name};
 use crate::mounts;
-use crate::project::{project_base_name, project_name, sbx_file, worktree_suffix};
+use crate::project::{project_base_name, project_name, worktree_suffix};
 use crate::util::{config_dir, die, home_dir, log};
 
 const FLAVOR: &str = "claude";
@@ -57,7 +57,7 @@ pub fn run(
         v
     };
 
-    let extra_mounts = mounts::resolve(cwd, &home_dir(), &cli_mounts);
+    let extra_mounts = mounts::resolve(cwd, &home_dir(), &cli_mounts, Some("claude"));
     let profile = resolve_profile(cwd, cli_profile.as_deref());
     let extra_host_args = build_claude_mount_args(profile.as_deref());
 
@@ -192,14 +192,12 @@ pub fn resolve_profile(cwd: &Path, cli: Option<&str>) -> Option<String> {
         }
         return Some(name.to_string());
     }
-    let pin = sbx_file(cwd, "claude-profile");
-    if let Ok(contents) = std::fs::read_to_string(&pin) {
-        let name = contents.trim();
+    if let Some(name) = crate::config::Config::load_or_default(cwd).claude.profile {
+        let name = name.trim();
         if !name.is_empty() {
             if !profile_exists(name) {
                 die(format!(
-                    "{} pins profile {name}, but it doesn't exist (have: {})",
-                    pin.display(),
+                    ".sbx/config.toml pins claude profile {name}, but it doesn't exist (have: {})",
                     list_profiles().join(", ")
                 ));
             }
@@ -213,7 +211,7 @@ pub fn print_profile_list(cwd: &Path) {
     let current = resolve_profile(cwd, None);
     let profiles = list_profiles();
     if profiles.is_empty() {
-        log("no profiles yet — create one with: sbx claude profile add NAME");
+        log("no profiles yet - create one with: sbx claude profile add NAME");
         return;
     }
     for p in profiles {
@@ -229,7 +227,7 @@ pub fn print_profile_list(cwd: &Path) {
 pub fn print_current_profile(cwd: &Path, cli_profile: Option<&str>) {
     match resolve_profile(cwd, cli_profile) {
         Some(name) => println!("{name}"),
-        None => println!("(none — using host ~/.claude.json)"),
+        None => println!("(none, using host ~/.claude.json)"),
     }
 }
 

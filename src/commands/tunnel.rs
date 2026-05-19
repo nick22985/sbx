@@ -1,11 +1,11 @@
 use std::collections::HashSet;
-use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use crate::config::{Config, Tunnel as ConfigTunnel, TunnelRight};
 use crate::docker;
-use crate::project::{project_flavor, project_name, sbx_file, sbx_write_dir};
-use crate::tunnel::{self, Direction, parse};
+use crate::project::{project_flavor, project_name};
+use crate::tunnel::{self, Direction};
 use crate::util::{die, log};
 
 pub enum Action<'a> {
@@ -29,7 +29,7 @@ pub enum TopAction {
 
 pub fn run_top(cwd: &Path, action: TopAction) {
     let (flavor, root) = project_flavor(cwd)
-        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
+        .unwrap_or_else(|| die("no .sbx/config.toml here. run 'sbx init <flavor>' first."));
     match action {
         TopAction::Status => status(&root, &flavor),
         TopAction::Logs { follow } => logs(&root, follow),
@@ -340,22 +340,17 @@ fn stop(project_root: &Path) {
 
 pub fn run(cwd: &Path, action: Action<'_>) {
     let (_, root) = project_flavor(cwd)
-        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
-    let read_file = sbx_file(&root, "tunnels");
-    let write_dir = sbx_write_dir(&root);
-    let write_file = write_dir.join("tunnels");
+        .unwrap_or_else(|| die("no .sbx/config.toml here. run 'sbx init <flavor>' first."));
 
     match action {
         Action::List => {
-            let content = fs::read_to_string(&read_file).unwrap_or_default();
-            if content.trim().is_empty() {
+            let cfg = Config::load_or_default(&root);
+            if cfg.tunnels.is_empty() {
                 log("no tunnels configured");
                 return;
             }
-            log(format!("from {}:", read_file.display()));
-            print!("{content}");
-            if !content.ends_with('\n') {
-                println!();
+            for t in &cfg.tunnels {
+                println!("{}: {} = {}", t.dir, t.left, t.right.as_string());
             }
         }
         Action::Add {
@@ -371,12 +366,11 @@ pub fn run(cwd: &Path, action: Action<'_>) {
             let Ok(left_port) = left.parse::<u16>() else {
                 die(format!("invalid port: {left}"));
             };
-            match dir {
-                Direction::Out | Direction::In => {
-                    if right.parse::<u16>().is_err() {
-                        die(format!("invalid right-side port: {right}"));
-                    }
-                }
+            let right_val = match dir {
+                Direction::Out | Direction::In => match right.parse::<u16>() {
+                    Ok(p) => TunnelRight::Port(p),
+                    Err(_) => die(format!("invalid right-side port: {right}")),
+                },
                 Direction::Via | Direction::ViaHost => {
                     let Some((host, port)) = right.rsplit_once(':') else {
                         die(format!(
@@ -390,36 +384,35 @@ pub fn run(cwd: &Path, action: Action<'_>) {
                             dir.as_str()
                         ));
                     }
+                    TunnelRight::Address(right.to_string())
                 }
-            }
-
-            fs::create_dir_all(&write_dir).ok();
-            let mut content = fs::read_to_string(&write_file).unwrap_or_default();
-            let existing = parse(&content);
-            if existing
+            };
+            let cfg = Config::load_or_default(&root);
+            if cfg
+                .tunnels
                 .iter()
-                .any(|t| t.direction == dir && t.left == left_port)
+                .any(|t| t.dir == dir.as_str() && t.left == left_port)
             {
                 die(format!(
-                    "{} {} already configured in {}",
+                    "{} {} already configured",
                     dir.as_str(),
                     left_port,
-                    write_file.display()
                 ));
             }
-            if !content.ends_with('\n') && !content.is_empty() {
-                content.push('\n');
-            }
-            content.push_str(&format!("{}: {} = {}\n", dir.as_str(), left_port, right));
-            if let Err(e) = fs::write(&write_file, content) {
-                die(format!("write {}: {e}", write_file.display()));
-            }
+            let path = Config::edit(&root, |c| {
+                c.tunnels.push(ConfigTunnel {
+                    dir: dir.as_str().to_string(),
+                    left: left_port,
+                    right: right_val,
+                });
+            })
+            .unwrap_or_else(|e| die(format!("write config.toml: {e}")));
             log(format!(
                 "added {} {} = {} in {}",
                 dir.as_str(),
                 left_port,
                 right,
-                write_file.display()
+                path.display()
             ));
         }
         Action::Remove { direction, left } => {
@@ -431,37 +424,16 @@ pub fn run(cwd: &Path, action: Action<'_>) {
             let Ok(left_port) = left.parse::<u16>() else {
                 die(format!("invalid port: {left}"));
             };
-            if !write_file.is_file() {
-                die(format!("no {}", write_file.display()));
-            }
-            let content = fs::read_to_string(&write_file).unwrap_or_default();
-            let kept: Vec<&str> = content
-                .lines()
-                .filter(|line| {
-                    let body = line.split('#').next().unwrap_or("").trim();
-                    let Some((d, rest)) = body.split_once(':') else {
-                        return true;
-                    };
-                    let Some((l, _)) = rest.split_once('=') else {
-                        return true;
-                    };
-                    let parsed_dir = Direction::parse(d);
-                    let parsed_left = l.trim().parse::<u16>().ok();
-                    !(parsed_dir == Some(dir) && parsed_left == Some(left_port))
-                })
-                .collect();
-            let mut out = kept.join("\n");
-            if !out.is_empty() {
-                out.push('\n');
-            }
-            if let Err(e) = fs::write(&write_file, out) {
-                die(format!("write {}: {e}", write_file.display()));
-            }
+            let path = Config::edit(&root, |c| {
+                c.tunnels
+                    .retain(|t| !(t.dir == dir.as_str() && t.left == left_port));
+            })
+            .unwrap_or_else(|e| die(format!("write config.toml: {e}")));
             log(format!(
                 "removed {} {} from {}",
                 dir.as_str(),
                 left_port,
-                write_file.display()
+                path.display()
             ));
         }
     }

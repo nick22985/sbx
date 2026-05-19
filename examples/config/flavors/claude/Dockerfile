@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 FROM sbx-base:latest
 
-# Build tooling for Rust native crates + Adoptium GPG key support.
+ARG USER_HOME=/home/dev
+
 USER root
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -60,15 +61,14 @@ RUN --mount=type=cache,target=/tmp/sbx-dl,sharing=locked set -eux; \
     ln -s /opt/gradle-${GRADLE_VERSION}/bin/gradle /usr/local/bin/gradle; \
     gradle --version
 
-# Rust (via rustup)
 USER dev
 RUN --mount=type=cache,target=/tmp/sbx-dl,sharing=locked,uid=1000,gid=1000 set -eux; \
     if [ ! -f /tmp/sbx-dl/rustup-init.sh ]; then \
         curl -fsSL https://sh.rustup.rs -o /tmp/sbx-dl/rustup-init.sh; \
     fi; \
-    CARGO_HOME=/home/dev/.cargo RUSTUP_HOME=/home/dev/.rustup \
+    CARGO_HOME=${USER_HOME}/.cargo RUSTUP_HOME=${USER_HOME}/.rustup \
         bash /tmp/sbx-dl/rustup-init.sh -y --no-modify-path --default-toolchain stable --profile minimal; \
-    /home/dev/.cargo/bin/rustc --version
+    ${USER_HOME}/.cargo/bin/rustc --version
 
 USER root
 
@@ -87,35 +87,26 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     && ln -s /opt/graphify/bin/graphify /usr/local/bin/graphify \
     && graphify --version
 
-# Claude Code CLI — native install via the official installer. The launcher
-# lands at ~/.local/bin/claude (user-writable), so in-place auto-updates work.
-# At runtime sbx mounts a named volume at /home/dev/.local so updates persist
-# across container recreations.
 USER dev
 RUN --mount=type=cache,target=/tmp/sbx-dl,sharing=locked,uid=1000,gid=1000 set -eux; \
     if [ ! -f /tmp/sbx-dl/claude-install.sh ]; then \
         curl -fsSL https://claude.ai/install.sh -o /tmp/sbx-dl/claude-install.sh; \
     fi; \
-    HOME=/home/dev bash /tmp/sbx-dl/claude-install.sh; \
-    /home/dev/.local/bin/claude --version
+    HOME=${USER_HOME} bash /tmp/sbx-dl/claude-install.sh; \
+    ${USER_HOME}/.local/bin/claude --version
 USER root
 
-# Entrypoint: runs `graphify install` once into the mounted ~/.claude.
 COPY wrappers/entrypoint /opt/sbx/bin/entrypoint
 RUN chmod +x /opt/sbx/bin/entrypoint \
-    && { \
-        echo 'export CARGO_HOME=/home/dev/.cargo'; \
-        echo 'export RUSTUP_HOME=/home/dev/.rustup'; \
-        echo 'export PATH=/home/dev/.cargo/bin:/opt/bun/bin:$PATH'; \
-    } >> /etc/profile.d/sbx.sh
+    && printf 'export CARGO_HOME=%s/.cargo\nexport RUSTUP_HOME=%s/.rustup\nexport PATH=%s/.cargo/bin:/opt/bun/bin:$PATH\n' "$USER_HOME" "$USER_HOME" "$USER_HOME" >> /etc/profile.d/sbx.sh
 
 USER dev
 
-ENV NPM_CONFIG_CACHE=/home/dev/.npm \
-    BUN_INSTALL_CACHE_DIR=/home/dev/.bun/install/cache \
-    CARGO_HOME=/home/dev/.cargo \
-    RUSTUP_HOME=/home/dev/.rustup \
-    PATH=/opt/sbx/bin:/home/dev/.local/bin:/home/dev/.local/share/mise/shims:/home/dev/.cargo/bin:/opt/bun/bin:/usr/local/bin:/usr/bin:/bin
+ENV NPM_CONFIG_CACHE=${USER_HOME}/.npm \
+    BUN_INSTALL_CACHE_DIR=${USER_HOME}/.bun/install/cache \
+    CARGO_HOME=${USER_HOME}/.cargo \
+    RUSTUP_HOME=${USER_HOME}/.rustup \
+    PATH=/opt/sbx/bin:${USER_HOME}/.local/bin:${USER_HOME}/.local/share/mise/shims:${USER_HOME}/.cargo/bin:/opt/bun/bin:/usr/local/bin:/usr/bin:/bin
 
 ENTRYPOINT ["/opt/sbx/bin/entrypoint"]
 CMD ["/bin/bash"]

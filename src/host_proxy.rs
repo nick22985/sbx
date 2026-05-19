@@ -2,16 +2,15 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::project::sbx_file;
+use crate::config::Config;
 use crate::util::{config_dir, log};
 
 pub const SIDECAR: &str = "sbx-host-proxy";
 pub const PORT: u16 = 8118;
 const IMAGE: &str = "kalaksi/tinyproxy:latest";
-const MARKER: &str = "host-proxy";
 
 pub fn is_enabled(project_root: &Path) -> bool {
-    sbx_file(project_root, MARKER).is_file()
+    Config::load_or_default(project_root).host_proxy.enabled
 }
 
 pub fn data_dir() -> PathBuf {
@@ -31,17 +30,11 @@ pub fn projects_dir() -> PathBuf {
 }
 
 pub fn read_allowed_hosts(project_root: &Path) -> Vec<String> {
-    let p = sbx_file(project_root, MARKER);
-    let body = std::fs::read_to_string(&p).unwrap_or_default();
-    parse_allowed_hosts(&body)
-}
-
-pub fn parse_allowed_hosts(body: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut seen = BTreeSet::new();
-    for line in crate::util::config_lines(body) {
-        if seen.insert(line.to_string()) {
-            out.push(line.to_string());
+    for h in Config::load_or_default(project_root).host_proxy.allow {
+        if seen.insert(h.clone()) {
+            out.push(h);
         }
     }
     out
@@ -284,41 +277,32 @@ pub fn proxy_env_args() -> Vec<String> {
     out
 }
 
-pub fn marker_file(project_root: &Path) -> PathBuf {
-    crate::project::sbx_write_dir(project_root).join(MARKER)
-}
-
 /// Read the project's allowlist, add `host` if not already present, write back.
 pub fn add_allowed_host(project_root: &Path, host: &str) -> Result<bool, String> {
-    let path = marker_file(project_root);
-    let mut hosts = read_allowed_hosts(project_root);
+    let hosts = read_allowed_hosts(project_root);
     if hosts.iter().any(|h| h == host) {
         return Ok(false);
     }
-    hosts.push(host.to_string());
-    write_marker_file(&path, &hosts)?;
+    Config::edit(project_root, |c| {
+        if !c.host_proxy.allow.iter().any(|h| h == host) {
+            c.host_proxy.allow.push(host.to_string());
+        }
+    })
+    .map_err(|e| format!("write config.toml: {e}"))?;
     Ok(true)
 }
 
 /// Read the project's allowlist, remove `host` if present, write back.
 pub fn remove_allowed_host(project_root: &Path, host: &str) -> Result<bool, String> {
-    let path = marker_file(project_root);
-    let mut hosts = read_allowed_hosts(project_root);
-    let n = hosts.len();
-    hosts.retain(|h| h != host);
-    if hosts.len() == n {
+    let hosts = read_allowed_hosts(project_root);
+    if !hosts.iter().any(|h| h == host) {
         return Ok(false);
     }
-    write_marker_file(&path, &hosts)?;
+    Config::edit(project_root, |c| {
+        c.host_proxy.allow.retain(|h| h != host);
+    })
+    .map_err(|e| format!("write config.toml: {e}"))?;
     Ok(true)
-}
-
-fn write_marker_file(path: &Path, hosts: &[String]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
-    }
-    let body: String = hosts.iter().map(|h| format!("{h}\n")).collect();
-    std::fs::write(path, body).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
 #[cfg(test)]
@@ -351,19 +335,6 @@ mod tests {
         assert!(joined.contains("https_proxy=http://host.docker.internal:8118"));
         assert!(joined.contains("HTTPS_PROXY=http://host.docker.internal:8118"));
         assert!(joined.contains("no_proxy="));
-    }
-
-    #[test]
-    fn parse_allowed_skips_comments_and_blanks() {
-        let body = "# comment\n\nfoo.com\n  bar.com  # inline\n*.maven.org\n";
-        let hosts = parse_allowed_hosts(body);
-        assert_eq!(hosts, vec!["foo.com", "bar.com", "*.maven.org"]);
-    }
-
-    #[test]
-    fn parse_allowed_dedupes() {
-        let hosts = parse_allowed_hosts("foo.com\nfoo.com\n");
-        assert_eq!(hosts, vec!["foo.com"]);
     }
 
     #[test]

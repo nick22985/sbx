@@ -1,0 +1,132 @@
+# Every sbx project keeps a single `.sbx/config.toml` at the project root.
+# All knobs live here. Edit it directly or use `sbx config <subcommand>`.
+#
+# Run `sbx migrate` once if you have a legacy `.sbx/` layout (flavor,
+# hostname, ports, etc. as separate files); it consolidates them into this
+# file and moves the originals into `.sbx/legacy/`.
+
+# Required. Names the flavor (`npm`, `rust`, ...). Set by `sbx init`.
+flavor = "npm"
+
+# Optional. Overrides the worktree suffix that gets baked into the project
+# name (and hostname prefix). By default sbx uses the branch name.
+# name = "exp1"
+
+# Optional. Overrides the hash-derived per-worktree port shift. Setting to 0
+# pins the worktree to the base ports (useful for `master`/`main`-like
+# checkouts that should always use the un-shifted ports).
+# port-offset = 0
+
+# Ports forwarded to 127.0.0.1 on the host. Same ports also flow through to
+# sidecar services that share the netns.
+ports = [3000, 5173, 8025]
+
+# Shell command for `sbx run`. The whole string is passed to bash -c, so
+# multi-line scripts and pipes work.
+start = "npm run dev"
+
+# Extra host paths mounted into every sbx session for this project.
+# Layered on top of `mounts` in ~/.config/sbx/config.toml.
+#
+# Syntax (missing host paths are skipped):
+#   "host"                     - same path on both sides
+#   "host:container"           - explicit container path
+#   "host:container:ro"        - read-only
+#   "host::ro"                 - same-path bind, read-only
+#
+# `~/` on the host side expands to your host $HOME; `~/` on the container
+# side expands to the flavor's container home (e.g. /home/dev).
+mounts = [
+    "~/dotfiles",
+    "~/projects/personal/example-app",
+    "~/projects/work/example-service",
+    # "~/.m2/settings.xml:~/.m2/settings.xml:ro",
+]
+
+# Extra cache mounts for this project. Layered on top of the flavor's
+# `caches` and `caches` in ~/.config/sbx/config.toml; entries with the
+# same container path override earlier layers.
+#
+# Syntax (one entry per line; missing host paths auto-created on first run):
+#   "<host_rel>"                          host bind, container = /home/dev/<host_rel>
+#   "<host_rel>:<container_path>"         host bind, explicit container path
+#   "@<volume_name>:<container_path>"     named docker volume
+caches = [
+    ".cache/pre-commit",
+    # Pin this project to an isolated docker volume for Maven, even though
+    # the global config binds ~/.m2 — useful when the project's lockfile
+    # pulls in artifacts you don't want polluting your host cache:
+    # "@sbx-maven-this-project:/home/dev/.m2",
+]
+
+# Enables SSH agent + ~/.ssh/{config,known_hosts} forwarding into the
+# container. Toggle with: sbx config ssh on / off.
+ssh = true
+
+# Forwards the host docker socket into the container. WARNING: anything in
+# the container can break out to root on the host via this socket; only
+# enable for trusted projects. Toggle with: sbx config docker on / off.
+docker = false
+
+# Mounts the Wayland + X11 sockets and forwards DISPLAY/WAYLAND_DISPLAY so
+# GUI apps inside the container render on the host. Toggle with:
+# sbx config gui on / off.
+gui = false
+
+[claude]
+# Pins a named claude profile for this project.
+profile = "work"
+
+[network]
+# Route container traffic through a wireguard config resolved against
+# $SBX_VPN_DIR (or absolute path). Empty / missing disables.
+vpn = "mullvad-de"
+# tailscale = "1"      # default profile ($SBX_TAILSCALE_AUTHKEY)
+tailscale = "work"     # named profile ($SBX_TAILSCALE_AUTHKEY_WORK)
+
+# Traefik routes managed by `sbx proxy`. Keys are hostnames (optionally with
+# a path suffix); values are the port the traefik sidecar forwards to.
+# The sidecar listens on 127.0.0.1:80 and resolves *.sbx.localhost.
+[hostname]
+"app.sbx.localhost" = 3000
+"api.app.sbx.localhost" = 4000
+# Path-prefix routing - same host, different services:
+"admin.sbx.localhost/" = 3000
+"admin.sbx.localhost/metrics" = 9090
+
+# Public routes exposed through the cloudflare tunnel sidecar.
+[public]
+# "app.example.com" = 8080
+# "api.example.com" = 1337
+
+# Sidecar services started alongside the project container. They share the
+# project's network namespace, so `localhost:5432` inside the shell hits
+# postgres directly. Built-in shortcuts: redis, postgres, mongo, mysql,
+# mailpit. Anything containing `/` or `:` is treated as a raw image.
+[services]
+enabled = ["postgres", "redis", "mailpit"]
+# enabled = ["postgres", "ghcr.io/foo/bar:1.2.3"]
+
+# Per-project allowlist for the host tinyproxy sidecar. When `enabled` is
+# true, sandboxed code reaches the network only through this proxy and only
+# to listed hosts. Empty `allow` with `enabled = true` is unrestricted.
+[host_proxy]
+enabled = false
+allow = []
+# enabled = true
+# allow = ["github.com", "registry.npmjs.org"]
+
+# Port-forwarding tunnels for the socat sidecar.
+#   dir = "out"        sandbox -> host:                  right = host port
+#   dir = "in"         host -> sandbox (via host.docker.internal):  right = port
+#   dir = "via"        in-netns forwarder to host:port:  right = "host:port"
+#   dir = "via-host"   bridge-bound forwarder:           right = "host:port"
+# [[tunnel]]
+# dir = "out"
+# left = 3000
+# right = 3000
+#
+# [[tunnel]]
+# dir = "via"
+# left = 5432
+# right = "staging.tail-net.ts.net:5432"

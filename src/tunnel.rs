@@ -1,7 +1,8 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::project::{project_name, sbx_file};
+use crate::config::Config;
+use crate::project::project_name;
 use crate::util::{die, log};
 
 const IMAGE: &str = "alpine/socat:latest";
@@ -43,62 +44,43 @@ pub struct Tunnel {
 }
 
 pub fn read_tunnels(project_root: &Path) -> Vec<Tunnel> {
-    let f = sbx_file(project_root, "tunnels");
-    let Ok(contents) = std::fs::read_to_string(&f) else {
-        return Vec::new();
-    };
-    parse(&contents)
+    let cfg = Config::load_or_default(project_root);
+    parse_config_tunnels(&cfg.tunnels)
 }
 
-pub fn parse(contents: &str) -> Vec<Tunnel> {
+fn parse_config_tunnels(raws: &[crate::config::Tunnel]) -> Vec<Tunnel> {
     let mut out = Vec::new();
-    for line in crate::util::config_lines(contents) {
-        let Some((dir_part, rest)) = line.split_once(':') else {
-            log(format!("ignoring malformed line in .sbx/tunnels: {line}"));
-            continue;
-        };
-        let Some(direction) = Direction::parse(dir_part) else {
+    for raw in raws {
+        let Some(direction) = Direction::parse(&raw.dir) else {
             log(format!(
-                "ignoring unknown direction in .sbx/tunnels: {line} (use out/in/via/via-host)"
+                "ignoring unknown tunnel direction in config.toml: {} (use out/in/via/via-host)",
+                raw.dir
             ));
             continue;
         };
-        let Some((lhs, rhs)) = rest.split_once('=') else {
-            log(format!("ignoring malformed line in .sbx/tunnels: {line}"));
-            continue;
-        };
-        let lhs = lhs.trim();
-        let rhs = rhs.trim();
-        let Ok(left) = lhs.parse::<u16>() else {
-            log(format!(
-                "ignoring invalid left port in .sbx/tunnels: {line}"
-            ));
-            continue;
-        };
-        if rhs.is_empty() {
-            log(format!("ignoring empty right side in .sbx/tunnels: {line}"));
-            continue;
-        }
+        let right = raw.right.as_string();
         match direction {
             Direction::Out | Direction::In => {
-                if rhs.parse::<u16>().is_err() {
+                if right.parse::<u16>().is_err() {
                     log(format!(
-                        "ignoring invalid right port in .sbx/tunnels: {line}"
+                        "ignoring invalid right port in tunnel: {} {} -> {}",
+                        raw.dir, raw.left, right
                     ));
                     continue;
                 }
             }
             Direction::Via | Direction::ViaHost => {
-                if !rhs.contains(':') {
+                let Some((host, port)) = right.rsplit_once(':') else {
                     log(format!(
-                        "ignoring malformed right side in .sbx/tunnels (need host:port): {line}"
+                        "ignoring malformed via tunnel (need host:port): {} {} -> {}",
+                        raw.dir, raw.left, right
                     ));
                     continue;
-                }
-                let (_, port) = rhs.rsplit_once(':').unwrap();
-                if port.parse::<u16>().is_err() {
+                };
+                if host.is_empty() || port.parse::<u16>().is_err() {
                     log(format!(
-                        "ignoring invalid right port in .sbx/tunnels: {line}"
+                        "ignoring invalid via tunnel: {} {} -> {}",
+                        raw.dir, raw.left, right
                     ));
                     continue;
                 }
@@ -106,8 +88,8 @@ pub fn parse(contents: &str) -> Vec<Tunnel> {
         }
         out.push(Tunnel {
             direction,
-            left,
-            right: rhs.to_string(),
+            left: raw.left,
+            right,
         });
     }
     out
@@ -583,13 +565,18 @@ fn resolve_owner_ip(netns_owner: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn parse_toml(s: &str) -> Vec<Tunnel> {
+        let cfg: crate::config::Config = toml::from_str(s).expect("parse");
+        parse_config_tunnels(&cfg.tunnels)
+    }
+
     #[test]
     fn parse_basic() {
-        let t = parse(
-            "out: 3000 = 3000\n\
-             in: 5432 = 5432\n\
-             via: 5432 = staging.tail-net.ts.net:5432\n\
-             via-host: 27017 = 192.168.1.67:27017\n",
+        let t = parse_toml(
+            "[[tunnel]]\ndir = \"out\"\nleft = 3000\nright = 3000\n\
+             [[tunnel]]\ndir = \"in\"\nleft = 5432\nright = 5432\n\
+             [[tunnel]]\ndir = \"via\"\nleft = 5432\nright = \"staging.tail-net.ts.net:5432\"\n\
+             [[tunnel]]\ndir = \"via-host\"\nleft = 27017\nright = \"192.168.1.67:27017\"\n",
         );
         assert_eq!(
             t,
@@ -621,10 +608,14 @@ mod tests {
     #[test]
     fn parse_via_host_requires_host_colon_port() {
         // bare port on rhs is rejected
-        let t = parse("via-host: 27017 = 27017\n");
+        let t = parse_toml(
+            "[[tunnel]]\ndir = \"via-host\"\nleft = 27017\nright = 27017\n",
+        );
         assert!(t.is_empty(), "should reject rhs without ':' for via-host");
         // host without port is rejected
-        let t = parse("via-host: 27017 = 192.168.1.67:nope\n");
+        let t = parse_toml(
+            "[[tunnel]]\ndir = \"via-host\"\nleft = 27017\nright = \"192.168.1.67:nope\"\n",
+        );
         assert!(t.is_empty(), "should reject non-numeric port for via-host");
     }
 
@@ -700,16 +691,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_skips_blanks_and_comments() {
-        let t = parse(
-            "# comment\n\
-             \n\
-             out: 3000 = 3000   # inline\n\
-             garbage\n\
-             foo: 1 = 2\n\
-             in: bad = 5432\n\
-             in: 5432 = bad\n\
-             via: 5432 = no-port\n",
+    fn parse_skips_invalid_entries() {
+        let t = parse_toml(
+            "[[tunnel]]\ndir = \"out\"\nleft = 3000\nright = 3000\n\
+             [[tunnel]]\ndir = \"foo\"\nleft = 1\nright = 2\n\
+             [[tunnel]]\ndir = \"in\"\nleft = 5432\nright = \"bad\"\n\
+             [[tunnel]]\ndir = \"via\"\nleft = 5432\nright = \"no-port\"\n",
         );
         assert_eq!(t.len(), 1);
         assert_eq!(t[0].direction, Direction::Out);

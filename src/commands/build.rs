@@ -28,7 +28,7 @@ pub fn run(cwd: &Path, no_cache: bool, flavor_arg: Option<&str>) {
         return;
     }
     let (flavor, root) = project_flavor(cwd)
-        .unwrap_or_else(|| die("specify a flavor or run from a project with .sbx/flavor"));
+        .unwrap_or_else(|| die("specify a flavor or run from a project with .sbx/config.toml"));
     let project_df = sbx_file(&root, "Dockerfile");
     if !project_df.is_file() {
         build_image(&flavor, no_cache);

@@ -5,7 +5,7 @@ use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 
 use crate::env_file;
 use crate::flavor::list_flavors;
-use crate::project::{project_flavor, sbx_file};
+use crate::project::project_flavor;
 use crate::service::BUILTIN_SERVICES;
 use crate::util::{env_file_path, expand_tilde};
 
@@ -58,13 +58,10 @@ fn complete_configured_service(current: &OsStr) -> Vec<CompletionCandidate> {
     let Some((_, root)) = project_flavor(&cwd) else {
         return Vec::new();
     };
-    let f = sbx_file(&root, "services");
-    let Ok(content) = std::fs::read_to_string(&f) else {
-        return Vec::new();
-    };
-    content
-        .lines()
-        .map(|l| l.split('#').next().unwrap_or("").trim().to_string())
+    crate::config::Config::load_or_default(&root)
+        .services
+        .enabled
+        .into_iter()
         .filter(|s| !s.is_empty() && (cur.is_empty() || fuzzy(cur, s)))
         .map(CompletionCandidate::new)
         .collect()
@@ -78,25 +75,13 @@ fn complete_configured_port(current: &OsStr) -> Vec<CompletionCandidate> {
     let Some((_, root)) = project_flavor(&cwd) else {
         return Vec::new();
     };
-    let f = sbx_file(&root, "ports");
-    let Ok(content) = std::fs::read_to_string(&f) else {
-        return Vec::new();
-    };
-    content
-        .lines()
-        .filter_map(|l| {
-            let cleaned: String = l
-                .split('#')
-                .next()
-                .unwrap_or("")
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            if cleaned.is_empty() || cleaned.parse::<u16>().is_err() {
-                return None;
-            }
-            if cur.is_empty() || fuzzy(cur, &cleaned) {
-                Some(CompletionCandidate::new(cleaned))
+    crate::config::Config::load_or_default(&root)
+        .ports
+        .into_iter()
+        .filter_map(|p| {
+            let s = p.to_string();
+            if cur.is_empty() || fuzzy(cur, &s) {
+                Some(CompletionCandidate::new(s))
             } else {
                 None
             }
@@ -278,6 +263,7 @@ pub enum Cmd {
         flavor: Option<String>,
     },
     List,
+    Migrate,
     #[command(alias = "ps", alias = "ls-sessions")]
     Sessions,
     #[command(alias = "cfg", alias = "conf")]

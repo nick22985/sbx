@@ -1,0 +1,14 @@
+mounts = [
+    "~/.config/nvim",
+    "~/projects/personal/neovim/plugins",
+]
+
+caches = [
+    ".local/share/nvim",
+    ".local/state/nvim",
+    ".cache/nvim",
+    ".vim/undodir",
+    ".supermaven",
+]
+
+start = "nvim ."

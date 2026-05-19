@@ -40,7 +40,7 @@ fn validate_profile_or_die(name: &str) {
 
 fn cmd_on(cwd: &Path, name: Option<&str>) {
     let (_, root) = project_flavor(cwd)
-        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
+        .unwrap_or_else(|| die("no .sbx/config.toml here. run 'sbx init <flavor>' first."));
     let (value, env_name) = match name {
         None => ("1".to_string(), authkey_env(None)),
         Some(n) => {
@@ -54,11 +54,11 @@ fn cmd_on(cwd: &Path, name: Option<&str>) {
             Some(n) => format!("sbx net tailscale auth {n}"),
         };
         log(format!(
-            "warning: {env_name} is not set — run '{hint}' before starting a shell"
+            "warning: {env_name} is not set - run '{hint}' before starting a shell"
         ));
     }
     if let Err(e) = network::set_key(&root, "tailscale", &value) {
-        die(format!("write .sbx/network: {e}"));
+        die(format!("write config.toml: {e}"));
     }
     let pname = project_name(&root);
     match name {
@@ -69,10 +69,10 @@ fn cmd_on(cwd: &Path, name: Option<&str>) {
 
 fn cmd_off(cwd: &Path) {
     let (_, root) = project_flavor(cwd)
-        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
+        .unwrap_or_else(|| die("no .sbx/config.toml here. run 'sbx init <flavor>' first."));
     let prev = ProjectNetwork::read(&root).tailscale;
     if let Err(e) = network::set_key(&root, "tailscale", "") {
-        die(format!("write .sbx/network: {e}"));
+        die(format!("write config.toml: {e}"));
     }
     log(format!("tailscale disabled for {}", project_name(&root)));
     let profile = match &prev {
@@ -137,7 +137,7 @@ fn cmd_auth(name: Option<&str>) {
         die("empty auth key; aborting");
     }
     if !key.starts_with("tskey-") {
-        log("warning: auth key doesn't start with 'tskey-' — saving anyway");
+        log("warning: auth key doesn't start with 'tskey-', saving anyway");
     }
     if let Err(e) = env_file::set_var(&env_name, &key) {
         die(format!("write env file: {e}"));

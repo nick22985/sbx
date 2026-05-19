@@ -1,0 +1,7 @@
+container-home = "/home/nick"
+
+mounts = [
+    "~/.m2",
+    "~/.gradle",
+    "~/.m2/settings.xml:~/.m2/settings.xml:ro",
+]

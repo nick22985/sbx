@@ -1,14 +1,53 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+use std::cell::RefCell;
+
+#[cfg(test)]
+thread_local! {
+    static CONFIG_DIR_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static HOME_DIR_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
 pub fn home_dir() -> PathBuf {
+    #[cfg(test)]
+    if let Some(p) = HOME_DIR_OVERRIDE.with(|h| h.borrow().clone()) {
+        return p;
+    }
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
 }
 
 pub fn config_dir() -> PathBuf {
+    #[cfg(test)]
+    if let Some(p) = CONFIG_DIR_OVERRIDE.with(|c| c.borrow().clone()) {
+        return p;
+    }
     dirs::config_dir()
         .unwrap_or_else(|| home_dir().join(".config"))
         .join("sbx")
+}
+
+#[cfg(test)]
+pub struct TestPathGuard;
+
+#[cfg(test)]
+impl Drop for TestPathGuard {
+    fn drop(&mut self) {
+        CONFIG_DIR_OVERRIDE.with(|c| c.borrow_mut().take());
+        HOME_DIR_OVERRIDE.with(|h| h.borrow_mut().take());
+    }
+}
+
+#[cfg(test)]
+pub fn set_test_paths(config: PathBuf, home: PathBuf) -> TestPathGuard {
+    CONFIG_DIR_OVERRIDE.with(|c| *c.borrow_mut() = Some(config));
+    HOME_DIR_OVERRIDE.with(|h| *h.borrow_mut() = Some(home));
+    TestPathGuard
+}
+
+pub fn flavors_dir() -> PathBuf {
+    config_dir().join("flavors")
 }
 
 pub fn env_file_path() -> PathBuf {
@@ -85,4 +124,67 @@ pub fn confirm(prompt: &str) -> bool {
         Err(_) => return false,
     };
     matches!(result.trim(), "y" | "Y" | "yes" | "YES")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_lines_strips_comments_and_blanks() {
+        let body = "# header\n\nfoo\nbar # trailing\n  \nbaz#nospace\n";
+        let lines: Vec<&str> = config_lines(body).collect();
+        assert_eq!(lines, vec!["foo", "bar", "baz"]);
+    }
+
+    #[test]
+    fn config_lines_empty_input_yields_no_lines() {
+        let lines: Vec<&str> = config_lines("").collect();
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn sanitize_tag_lowercases_and_keeps_allowed_chars() {
+        assert_eq!(sanitize_tag("My-Tag_1.2"), "my-tag_1.2");
+    }
+
+    #[test]
+    fn sanitize_tag_replaces_disallowed_chars_with_dash() {
+        assert_eq!(sanitize_tag("a/b c@d"), "a-b-c-d");
+    }
+
+    #[test]
+    fn sanitize_tag_handles_empty() {
+        assert_eq!(sanitize_tag(""), "");
+    }
+
+    #[test]
+    fn expand_tilde_resolves_home_prefix() {
+        let cfg = std::env::temp_dir().join("sbx-util-tilde-cfg");
+        let home = std::env::temp_dir().join("sbx-util-tilde-home");
+        let _ = std::fs::create_dir_all(&home);
+        let home_clone = home.clone();
+        let _g = set_test_paths(cfg, home);
+        assert_eq!(expand_tilde("~/.config"), home_clone.join(".config"));
+    }
+
+    #[test]
+    fn expand_tilde_lone_tilde_is_home() {
+        let cfg = std::env::temp_dir().join("sbx-util-tilde2-cfg");
+        let home = std::env::temp_dir().join("sbx-util-tilde2-home");
+        let _ = std::fs::create_dir_all(&home);
+        let home_clone = home.clone();
+        let _g = set_test_paths(cfg, home);
+        assert_eq!(expand_tilde("~"), home_clone);
+    }
+
+    #[test]
+    fn expand_tilde_passes_through_absolute_path() {
+        assert_eq!(expand_tilde("/etc/hosts"), PathBuf::from("/etc/hosts"));
+    }
+
+    #[test]
+    fn expand_tilde_does_not_expand_unanchored_tilde() {
+        assert_eq!(expand_tilde("~user/foo"), PathBuf::from("~user/foo"));
+    }
 }

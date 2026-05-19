@@ -7,6 +7,7 @@ pub mod gui;
 pub mod host_proxy;
 pub mod hostname;
 pub mod init;
+pub mod migrate;
 pub mod port;
 pub mod proxy;
 pub mod public;

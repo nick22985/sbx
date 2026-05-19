@@ -254,3 +254,65 @@ fn print_logs(name: &str) {
         .args(["logs", "--tail", "80", name])
         .status();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_env_suffix_uppercases_alphanumerics() {
+        assert_eq!(normalize_env_suffix("work"), "WORK");
+        assert_eq!(normalize_env_suffix("test2"), "TEST2");
+    }
+
+    #[test]
+    fn normalize_env_suffix_replaces_non_alphanumerics_with_underscore() {
+        assert_eq!(normalize_env_suffix("my-profile.2"), "MY_PROFILE_2");
+        assert_eq!(normalize_env_suffix("a b"), "A_B");
+    }
+
+    #[test]
+    fn authkey_env_uses_base_when_no_profile() {
+        assert_eq!(authkey_env(None), AUTHKEY_ENV_BASE);
+    }
+
+    #[test]
+    fn authkey_env_appends_normalized_suffix_for_profile() {
+        assert_eq!(
+            authkey_env(Some("my-work")),
+            format!("{AUTHKEY_ENV_BASE}_MY_WORK")
+        );
+    }
+
+    #[test]
+    fn is_valid_profile_name_accepts_lowercase_digits_dash_underscore() {
+        assert!(is_valid_profile_name("work"));
+        assert!(is_valid_profile_name("my-profile_2"));
+    }
+
+    #[test]
+    fn is_valid_profile_name_rejects_empty_uppercase_and_punctuation() {
+        assert!(!is_valid_profile_name(""));
+        assert!(!is_valid_profile_name("Work"));
+        assert!(!is_valid_profile_name("my.profile"));
+        assert!(!is_valid_profile_name("my profile"));
+    }
+
+    #[test]
+    fn sidecar_name_format() {
+        assert_eq!(sidecar_name("proj", None), "sbx-tailscale-proj");
+        assert_eq!(
+            sidecar_name("proj", Some("work")),
+            "sbx-tailscale-proj-work"
+        );
+    }
+
+    #[test]
+    fn state_volume_format() {
+        assert_eq!(state_volume("proj", None), "sbx-tailscale-proj-state");
+        assert_eq!(
+            state_volume("proj", Some("work")),
+            "sbx-tailscale-proj-work-state"
+        );
+    }
+}

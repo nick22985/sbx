@@ -45,9 +45,9 @@ default-deny for the day-to-day "I just ran `npm install`" risks.
 sbx build base                  # build the base image
 sbx build npm                   # …and one flavor
 cd ~/code/some-project
-sbx init npm                    # tag the project; writes .sbx/flavor
+sbx init npm                    # tag the project; writes .sbx/config.toml
 sbx config port add 3000        # publish 3000 to the host
-sbx run                         # spin up & run .sbx/start (or shell in)
+sbx run                         # spin up & run config.toml's `start` (or shell in)
 ```
 
 That's the 90% case. Everything else (HTTPS, VPN, public URLs, multi-service
@@ -73,13 +73,13 @@ COMPLETE=fish sbx | source
 `sbx completions <shell>` also prints a static completion script if you'd
 rather check one in.
 
-Flavors live under `~/.config/sbx/<flavor>/Dockerfile`. The repo ships a
-working set in [`examples/flavors/`](examples/flavors/), `base`, `npm`,
-`bun`, `rust`, `java`, and `claude`. Copy the ones you want into
-`~/.config/sbx/`, then `sbx build base` and `sbx build <flavor>` to
-bring them up.
+Flavors live under `~/.config/sbx/flavors/<flavor>/Dockerfile`. The repo
+ships a working set in [`examples/config/flavors/`](examples/config/flavors/),
+`base`, `npm`, `bun`, `rust`, `java`, and `claude`. Copy the ones you
+want into `~/.config/sbx/flavors/`, then `sbx build base` and
+`sbx build <flavor>` to bring them up.
 
-<img alt="tree ~/.config/sbx/ showing one directory per flavor (base, npm, bun, rust, java, claude), each containing a Dockerfile." src="docs/images/flavors-tree.webp">
+<img alt="tree ~/.config/sbx/flavors/ showing one directory per flavor (base, npm, bun, rust, java, claude), each containing a Dockerfile." src="docs/images/flavors-tree.webp">
 
 
 
@@ -93,7 +93,7 @@ sbx shell [cmd...]      Enter the project's container (or run `cmd` in it)
 sbx shell -f <flavor> [cmd...]
                         Override the flavor (ad-hoc), with optional command
 sbx <flavor>            Ad-hoc transient shell of <flavor> in cwd
-sbx run                 Run `.sbx/start` in a fresh container
+sbx run                 Run `start` from .sbx/config.toml in a fresh container
 sbx sessions            List running sbx containers (alias: ps)
 sbx stop                Stop containers, services, and network sidecars
 sbx list                List available flavors
@@ -119,7 +119,7 @@ alias rustc='sbx shell -f rust rustc'
 Now `npm install` in any directory runs `npm install` inside the `npm`
 flavor's container with cwd bind-mounted at the same path. No host
 `node_modules` postinstall scripts, no host `cargo build.rs` running with
-your credentials. If the project has its own `.sbx/flavor`, drop the
+your credentials. If the project has its own `.sbx/config.toml`, drop the
 `-f` and the project's flavor is used automatically (`sbx shell npm install`).
 
 Flavor name vs. binary: the `-f` arg picks the **image**, the rest is
@@ -141,6 +141,16 @@ sbx scan [fs|image]       Full trivy scan
 
 All per-project state lives under `sbx config` (aliases: `cfg`, `conf`).
 
+A project's `config.toml` is resolved from up to three locations and
+**merged**: a private copy under `$SBX_PRIVATE_DIR` (defaults to
+`~/dotfiles/env/.config/.nickInstall/install/configs/private/sbx/<path>`),
+the git common dir's `.sbx/`, and the working tree's `.sbx/`. Scalar
+fields (`flavor`, `start`, `name`, `port-offset`) follow local-wins
+precedence; list fields (`mounts`, `caches`, `ports`, `[[tunnel]]`) are
+concatenated and deduped; boolean flags (`ssh`, `docker`, `gui`) are
+OR'd; map fields (`hostname`, `public`) merge with the local key
+overriding. `sbx config <field> ...` writes to the local file only.
+
 ```
 sbx config port     [list|add N|rm N]
 sbx config hostname [list|add HOST PORT|rm HOST]   Map HOST.sbx.localhost via the proxy sidecar
@@ -156,21 +166,26 @@ sbx config gui      [on|off|status]                Forward host X11 / Wayland so
 ### Mounts
 
 Extra host paths can be made visible inside every sbx session (opt-in,
-off by default). Two layered files, plus claude's `-m` flag:
+off by default). Three layered sources, plus claude's `-m` flag:
 
-- `$XDG_CONFIG_HOME/sbx/mounts`, global, applied to **every** sbx
-  session regardless of flavor. Good for caches/tooling you always want
-  (e.g. `~/.m2`, `~/.gradle`, `~/.cache/pip`).
-- `./.sbx/mounts`, per-project, layered on top of the global file.
+- `mounts = [...]` in `$XDG_CONFIG_HOME/sbx/flavors/<flavor>/config.toml`,
+  bound only when that flavor is active. Good for editor configs and
+  other host paths a single flavor needs (e.g. `~/.config/nvim` for the
+  `nvim` flavor).
+- `mounts = [...]` in `$XDG_CONFIG_HOME/sbx/config.toml`, global,
+  applied to **every** sbx session regardless of flavor. Good for
+  caches/tooling you always want (e.g. `~/.m2`, `~/.gradle`,
+  `~/.cache/pip`).
+- `mounts = [...]` in `./.sbx/config.toml`, per-project, layered on top
+  of the global file.
 
-Line syntax (one per line, `#` comments allowed, missing host paths
-silently skipped):
+Entry syntax (missing host paths are silently skipped):
 
 ```
-host                       # same path on both sides
-host:container             # explicit container path
-host:container:ro          # read-only
-host::ro                   # same-path bind, read-only
+"host"                     # same path on both sides
+"host:container"           # explicit container path
+"host:container:ro"        # read-only
+"host::ro"                 # same-path bind, read-only
 ```
 
 `~/` on the host side expands to your host `$HOME`; `~/` on the
@@ -191,18 +206,21 @@ picks up your host `settings.xml` (auth, mirrors, etc.).
 
 ### Caches
 
-Flavor authors ship a `caches` file alongside their `Dockerfile`
-(`~/.config/sbx/<flavor>/caches`) declaring the host paths or named
-docker volumes that survive between runs (e.g. `~/.npm`, `~/.cargo`,
-`@sbx-maven-cache:/home/dev/.m2`). Two extra layers let you add to or
-override those without editing the flavor file:
+Flavor authors declare caches in `caches = [...]` inside
+`~/.config/sbx/flavors/<flavor>/config.toml`, alongside the `Dockerfile`. Each
+entry names a host path or named docker volume that survives between
+runs (e.g. `~/.npm`, `~/.cargo`, `@sbx-maven-cache:/home/dev/.m2`). Two
+extra layers let you add to or override those without editing the
+flavor's config:
 
-- `$XDG_CONFIG_HOME/sbx/caches`, global, applied to **every** sbx
-  session regardless of flavor. Good for caches you always want shared
-  with the host (e.g. `.cargo/registry`, `.npm`).
-- `./.sbx/caches`, per-project, layered on top of the global file.
+- `caches = [...]` in `$XDG_CONFIG_HOME/sbx/config.toml`, global,
+  applied to **every** sbx session regardless of flavor. Good for
+  caches you always want shared with the host (e.g. `.cargo/registry`,
+  `.npm`).
+- `caches = [...]` in `./.sbx/config.toml`, per-project, layered on top
+  of the global file.
 
-User layers use the same syntax as flavor `caches` files:
+All three layers use the same per-entry syntax:
 
 ```
 .cache/pip                            # host bind: ~/.cache/pip -> /home/dev/.cache/pip
@@ -211,30 +229,30 @@ User layers use the same syntax as flavor `caches` files:
 ```
 
 Override semantics: entries are merged by **container path**, with the
-project file winning over the global file winning over the flavor file.
-So if the `java` flavor ships `@sbx-maven-cache:/home/dev/.m2` and you'd
-rather use your host's `~/.m2`, drop `.m2:/home/dev/.m2` into
-`~/.config/sbx/caches` (or just `./.sbx/caches` for one project) and the
-host bind replaces the named volume. Missing host paths are auto-created
-on first run.
+project config winning over the global config winning over the flavor
+config. So if the `java` flavor ships `@sbx-maven-cache:/home/dev/.m2`
+and you'd rather use your host's `~/.m2`, add `".m2:/home/dev/.m2"` to
+`caches` in `~/.config/sbx/config.toml` (or just the project's
+`.sbx/config.toml` for one project) and the host bind replaces the
+named volume. Missing host paths are auto-created on first run.
 
 User-defined volumes are user-owned: `sbx clean` / `sbx purge` only
-remove volumes declared in the flavor's own `caches` file, so renaming
+remove volumes declared in the flavor's own `caches` list, so renaming
 the active volume via an override won't trigger surprise deletions of
 your data.
 
 ### GUI forwarding (opt-in)
 
-`sbx config gui on` touches `./.sbx/gui`; the next container start mounts
-the host's Wayland and X11 sockets and forwards `DISPLAY`,
-`WAYLAND_DISPLAY`, and `XDG_RUNTIME_DIR` so GUI apps inside the sandbox
-render on the host (Electron apps, browsers, IDEs launched from a flavor
-shell, etc.).
+`sbx config gui on` sets `gui = true` in `./.sbx/config.toml`; the next
+container start mounts the host's Wayland and X11 sockets and forwards
+`DISPLAY`, `WAYLAND_DISPLAY`, and `XDG_RUNTIME_DIR` so GUI apps inside the
+sandbox render on the host (Electron apps, browsers, IDEs launched from a
+flavor shell, etc.).
 
 ```sh
-sbx config gui on        # touches ./.sbx/gui
+sbx config gui on        # sets gui = true in ./.sbx/config.toml
 sbx config gui status    # shows whether forwarding is on + detected host sockets
-sbx config gui off       # removes the marker
+sbx config gui off       # sets gui = false
 ```
 
 `sbx config gui status` prints whether forwarding is enabled and which
@@ -280,22 +298,37 @@ them in one project, e.g. `app.sbx.localhost` for fast local dev and
   <img alt="How a request reaches the sandbox, by scope: (1) HTTP: browser to 127.0.0.1:80, Traefik routes to sandbox; (2) HTTPS: browser to 127.0.0.1:443, Traefik terminates TLS (mkcert or Let's Encrypt) and forwards plain HTTP to sandbox; (3) Public: browser to Cloudflare edge, cloudflared sidecar dials out over QUIC, then HTTP through Traefik to sandbox." src="docs/images/exposure-light.svg">
 </picture>
 
-VPN/Tailscale settings are stored per-project in `.sbx/network` and applied
-on the next `sbx` shell start. Tailscale supports multiple named profiles -
-each maps to its own `SBX_TAILSCALE_AUTHKEY[_<NAME>]` env var.
+VPN/Tailscale settings are stored per-project under `[network]` in
+`.sbx/config.toml` and applied on the next `sbx` shell start. Tailscale
+supports multiple named profiles - each maps to its own
+`SBX_TAILSCALE_AUTHKEY[_<NAME>]` env var.
 
 ### Tunnels
 
 `sbx config tunnel` forwards raw TCP between the host, the sandbox, and remote
-services reachable via Tailscale/VPN. Four directions, written as
-`DIR: LEFT = RIGHT` lines in `.sbx/tunnels`:
+services reachable via Tailscale/VPN. Four directions, written as `[[tunnel]]`
+tables in `.sbx/config.toml`:
 
-```
-out:      3000  = 3000                        # sandbox :3000  -> host 127.0.0.1:3000
-out:      8080  = 80                          # sandbox :80    -> host 127.0.0.1:8080
-in:       5432  = 5432                        # host :5432     -> sandbox localhost:5432
-via:      5432  = db.staging.tail-net.ts.net:5432   # host :5432 -> remote :5432 through the sandbox netns
-via-host: 27017 = 192.168.1.67:27017          # sandbox -> host.docker.internal:27017 -> remote (uses host's netns)
+```toml
+[[tunnel]]                            # sandbox :3000 -> host 127.0.0.1:3000
+dir = "out"
+left = 3000
+right = 3000
+
+[[tunnel]]                            # host :5432 -> sandbox localhost:5432
+dir = "in"
+left = 5432
+right = 5432
+
+[[tunnel]]                            # host :5432 -> remote :5432 through the sandbox netns
+dir = "via"
+left = 5432
+right = "db.staging.tail-net.ts.net:5432"
+
+[[tunnel]]                            # sandbox -> host.docker.internal:27017 -> remote (uses host's netns)
+dir = "via-host"
+left = 27017
+right = "192.168.1.67:27017"
 ```
 
 `via:` is most useful with Tailscale/VPN on: the sandbox netns has tailnet routes
@@ -330,7 +363,7 @@ through it. TLS is end-to-end, tinyproxy uses HTTP `CONNECT`, never
 terminates the TLS.
 
 ```sh
-sbx host-proxy on                                  # touches ./.sbx/host-proxy
+sbx host-proxy on                                  # sets [host_proxy] enabled = true
 sbx host-proxy allow repo.internal.example.com     # add a host to the allowlist
 sbx host-proxy allow '*.maven.org'                 # wildcard (subdomains)
 sbx host-proxy list                                # show this project's allowlist
@@ -338,12 +371,12 @@ sbx host-proxy status                              # marker + sidecar + merged a
 sbx run                                            # sidecar auto-starts on first session
 ```
 
-`./.sbx/host-proxy` is a list of allowed destination hostnames, one per
-line, `#` comments allowed. An **empty file** means "unrestricted for
-this project". A non-empty file restricts proxied traffic to only those
-hosts (matched by a tinyproxy `Filter` with `FilterDefaultDeny Yes`).
-Wildcards: `foo.com` matches `foo.com` exactly; `*.foo.com` matches any
-subdomain.
+The `[host_proxy]` table in `.sbx/config.toml` carries `enabled` (the
+on/off marker) and `allow` (the per-project allowlist). An **empty
+`allow`** with `enabled = true` means "unrestricted for this project".
+A non-empty list restricts proxied traffic to only those hosts (matched
+by a tinyproxy `Filter` with `FilterDefaultDeny Yes`). Wildcards:
+`foo.com` matches `foo.com` exactly; `*.foo.com` matches any subdomain.
 
 Changes to the allowlist hot-reload, `sbx host-proxy allow|disallow`
 rewrites the filter file and sends `SIGHUP` to the running sidecar. No
@@ -357,7 +390,7 @@ rather not enumerate every endpoint.
 **Shared-sidecar caveat.** A single `sbx-host-proxy` container serves
 every project, so the active allowlist is the **union of every active
 project's entries**. If project A allows only `repo.example.com` and
-project B's `.sbx/host-proxy` is empty (meaning "unrestricted for B"),
+project B's `allow` is empty (meaning "unrestricted for B"),
 the sidecar is still restricted to `[repo.example.com]` because A
 demanded restrictions, B effectively inherits A's allowlist for the
 duration. To run a truly unrestricted host-proxy, none of the active
@@ -378,7 +411,7 @@ Tunnel, no inbound ports, no DNS records to manage by hand. One-time setup:
 
 ```sh
 sbx public login                            # browser flow; writes ~/.config/sbx/cloudflared/cert.pem
-sbx public add app.example.com 8080         # in your project dir → writes ./.sbx/public
+sbx public add app.example.com 8080         # in your project dir, adds to [public] in .sbx/config.toml
 sbx run
 ```
 
@@ -392,8 +425,9 @@ edge). Multiple projects can register their own hostnames; the sidecar's
 
 `sbx public status` shows sidecar / login / tunnel state and merged hostnames
 across all active sessions. `sbx public logs [-f]` tails cloudflared;
-`sbx public stop` force-stops it. Hostnames added to `./.sbx/public` are
-registered on the next `sbx run` and unregistered on session exit.
+`sbx public stop` force-stops it. Hostnames added under `[public]` in
+`./.sbx/config.toml` are registered on the next `sbx run` and
+unregistered on session exit.
 
 The `cert.pem` produced by `sbx public login` is the Cloudflare API
 credential (account-scoped); the per-tunnel `credentials.json` next to it
@@ -446,18 +480,20 @@ won't double up).
 `sbx claude profile add work` creates an isolated `~/.claude` clone under
 `$XDG_CONFIG_HOME/sbx/claude-profiles/work/` seeded from your host
 `.claude.json`. Use it with `sbx claude -p work`, or pin a project to a
-profile by writing the name into `./.sbx/claude-profile`. Useful for
+profile by setting `[claude] profile = "..."` in `./.sbx/config.toml`. Useful for
 separating personal/work logins or for keeping different MCP setups apart.
 
 ### Docker socket forwarding (opt-in)
 
-`sbx config docker on` touches `./.sbx/docker`; every container start for that project
-then bind-mounts `/var/run/docker.sock` from the host and `--group-add`s the
-host docker GID so the unprivileged in-container user can talk to it. The base
-image ships the docker client binary.
+`sbx config docker on` sets `docker = true` in `./.sbx/config.toml`; every
+container start for that project then bind-mounts `/var/run/docker.sock`
+from the host and `--group-add`s the host docker GID so the unprivileged
+in-container user can talk to it. The base image ships the docker client
+binary.
 
-`sbx claude` intentionally does *not* follow `.sbx/docker`, opt in per-session
-with `--docker`, or globally with `SBX_DOCKER=1` in `~/.config/sbx/env`.
+`sbx claude` intentionally does *not* follow the project `docker` flag,
+opt in per-session with `--docker`, or globally with `SBX_DOCKER=1` in
+`~/.config/sbx/env`.
 
 **Security:** mounting the docker socket is effectively root on the host -
 anything inside the container can `docker run --privileged -v /:/host ...` and
@@ -465,34 +501,38 @@ escape the sandbox. Only enable this when you trust what's running inside.
 
 ## Files
 
-- `$XDG_CONFIG_HOME/sbx/<flavor>/Dockerfile`, base image source
-- `$XDG_CONFIG_HOME/sbx/env`                  - persistent env (KEY=value, chmod 600)
-- `$XDG_CONFIG_HOME/sbx/mounts`               - extra host paths for *every* sbx session (all flavors)
-- `$XDG_CONFIG_HOME/sbx/caches`               - extra cache mounts for *every* sbx session, layered on top of the flavor's `caches` file
-- `$XDG_CONFIG_HOME/sbx/claude-profiles/<n>/`, alternate `~/.claude` per profile
-- `./.sbx/flavor`                             - per-project marker
-- `./.sbx/Dockerfile`                         - optional, extends base
-- `./.sbx/ports`                              - one port per line
-- `./.sbx/hostname`                           - `host = port` or `host/path = port` lines, exposed via the proxy
-- `./.sbx/public`                             - `host = port` lines, exposed publicly via the shared Cloudflare Tunnel
-- `./.sbx/tunnels`                            - `out|in|via: LEFT = RIGHT` lines for raw-TCP forwarding
-- `./.sbx/start`                              - shell command for `sbx run`
-- `./.sbx/network`                            - `vpn = …` / `tailscale = …` per-project network config
-- `./.sbx/services`                           - sidecar service per line
-- `./.sbx/ssh`                                - touched file → mount $SSH_AUTH_SOCK + ~/.ssh/config + ~/.ssh/known_hosts (ro)
-- `./.sbx/docker`                             - touched file → mount /var/run/docker.sock
-- `./.sbx/gui`                                - touched file → forward host X11 / Wayland sockets for GUI apps
-- `./.sbx/host-proxy`                         - marker + optional allowlist (one host per line) for the host tinyproxy sidecar
-- `./.sbx/mounts`                             - extra host paths, one mount per line (`host[:container[:ro]]`)
-- `./.sbx/caches`                             - per-project cache mounts, layered on top of `~/.config/sbx/caches` and the flavor's `caches`
-- `./.sbx/claude-profile`                     - pins this project to a named claude profile
-- `./.sbx/name`                               - overrides the auto worktree suffix (see below)
-- `./.sbx/port-offset`                        - override the auto-derived per-worktree port offset (single integer)
+Three TOML scopes, one schema per scope, layered project > global > flavor:
 
-See [`examples/sbx/`](examples/sbx/) for an annotated example of every `.sbx/` file.
+- `./.sbx/config.toml`                       - per-project: every project knob
+  (`flavor`, `ports`, `mounts`, `caches`, `ssh`, `docker`, `gui`, `start`,
+  `[network]`, `[hostname]`, `[public]`, `[[tunnel]]`, `[services]`,
+  `[host_proxy]`, `[claude]`, plus `name` / `port-offset` worktree overrides).
+- `$XDG_CONFIG_HOME/sbx/config.toml`                  - global: `mounts` and `caches`
+  applied to every sbx session.
+- `$XDG_CONFIG_HOME/sbx/flavors/<flavor>/config.toml` - flavor: `mounts` and
+  `caches` shipped with the flavor's Dockerfile.
 
-In a git worktree, `.sbx/*` files are looked up in the worktree first, then
-the shared bare/primary repo, then the private overlay
+Plus:
+
+- `./.sbx/Dockerfile`                                  - optional, layers on top of the flavor image.
+- `$XDG_CONFIG_HOME/sbx/flavors/<flavor>/Dockerfile`   - base image source per flavor.
+- `$XDG_CONFIG_HOME/sbx/env`                           - persistent env (KEY=value, chmod 600).
+- `$XDG_CONFIG_HOME/sbx/claude-profiles/<n>/`          - alternate `~/.claude` per profile.
+
+See [`examples/sbx/`](examples/sbx/) for an annotated project `config.toml`
+and [`examples/config/`](examples/config/) for the global + per-flavor layout.
+
+Coming from an older sbx layout with separate files for `flavor`,
+`hostname`, `ports`, `mounts`, `caches`, etc., or with flavors at the
+top level of `~/.config/sbx/`? Run `sbx migrate` once; it folds project
+files into `./.sbx/config.toml`, global `~/.config/sbx/{mounts,caches}`
+into `~/.config/sbx/config.toml`, relocates each top-level flavor dir
+into `~/.config/sbx/flavors/<flavor>/`, and consolidates each flavor's
+`mounts` and `caches` into a per-flavor `config.toml`. Project legacy originals land
+in `./.sbx/legacy/` and global ones in `~/.config/sbx/legacy/`.
+
+In a git worktree, `.sbx/config.toml` is looked up in the worktree first,
+then the shared bare/primary repo, then the private overlay
 (`$SBX_PRIVATE_DIR/<rel-path>/.sbx/`).
 
 ### Worktrees
@@ -504,23 +544,25 @@ across worktrees:
 - `project_name` becomes `<repo>-<branch>`, distinct containers, proxy
   routes, sidecars, etc., so two worktrees of the same repo can run side
   by side.
-- Hostnames from `.sbx/hostname` and `.sbx/public` are auto-prefixed with
-  `<branch>-`. So a single shared `.sbx/hostname = app.sbx.localhost = 3000`
-  yields `https://app.sbx.localhost/` in the main checkout and
+- Hostnames under `[hostname]` and `[public]` in `.sbx/config.toml` are
+  auto-prefixed with `<branch>-`. So a single shared
+  `"app.sbx.localhost" = 3000` under `[hostname]` yields
+  `https://app.sbx.localhost/` in the main checkout and
   `https://server-live-app.sbx.localhost/` in a worktree on branch
   `server-live`. The prefix is flat (dash, not dot) so the URL stays at the
   same DNS depth as the original, existing wildcard certs
   (`*.sbx.localhost`, `*.example.com`) keep working.
 - Published ports get a stable hash-derived offset in `[1, 9]` so two
   worktrees of the same repo don't collide on the host (`master` / `main`
-  / non-worktree always use 0). Pin a specific offset by writing a single
-  integer to `.sbx/port-offset`.
+  / non-worktree always use 0). Pin a specific offset by setting
+  `port-offset = N` in `.sbx/config.toml`.
 
-The branch name is sanitized (`feature/foo` → `feature-foo`). To use
-something other than the branch name, drop a `.sbx/name` file in the
-worktree, its contents replace the suffix (so `.sbx/name = exp1` →
-`exp1-app.sbx.localhost` and project_name `<repo>-exp1`). Project images
-(`sbx-<flavor>-<repo>`) are unaffected, they're shared across worktrees.
+The branch name is sanitized (`feature/foo` -> `feature-foo`). To use
+something other than the branch name, set `name = "exp1"` in the worktree's
+`.sbx/config.toml`; its value replaces the suffix (so
+`name = "exp1"` -> `exp1-app.sbx.localhost` and project_name `<repo>-exp1`).
+Project images (`sbx-<flavor>-<repo>`) are unaffected, they're shared
+across worktrees.
 
 ## Environment
 
@@ -538,9 +580,9 @@ worktree, its contents replace the suffix (so `.sbx/name = exp1` →
 | `SBX_PROJECT_BASE` | Set inside sandboxes, repo base name without worktree suffix (e.g. `myapp`) |
 | `SBX_WORKTREE` | Set inside sandboxes, worktree suffix, empty in main checkout (e.g. `master`) |
 | `SBX_HOSTNAME` / `SBX_HOSTNAMES` | Set inside sandboxes, primary / all hostnames (public preferred over local, useful for OAuth/SAML callbacks) |
-| `SBX_LOCAL_HOSTNAME` / `SBX_LOCAL_HOSTNAMES` | Set inside sandboxes, first / all local hostnames from `.sbx/hostname` (already prefixed) |
-| `SBX_PUBLIC_HOSTNAME` / `SBX_PUBLIC_HOSTNAMES` | Set inside sandboxes, first / all public hostnames from `.sbx/public` |
-| `SBX_PORT` | Set inside sandboxes, primary published port (first entry in `.sbx/ports`) |
+| `SBX_LOCAL_HOSTNAME` / `SBX_LOCAL_HOSTNAMES` | Set inside sandboxes, first / all local hostnames from `[hostname]` (already prefixed) |
+| `SBX_PUBLIC_HOSTNAME` / `SBX_PUBLIC_HOSTNAMES` | Set inside sandboxes, first / all public hostnames from `[public]` |
+| `SBX_PORT` | Set inside sandboxes, primary published port (first entry in `ports`) |
 | `SBX_DOCKER=1` | Default `sbx claude` to mount the host docker socket |
 | `SBX_REMOTE_CONTROL=1` | Default `sbx claude` to enable `--remote-control` (off by default) |
 | `SBX_TAILSCALE_AUTHKEY[_<NAME>]=…` | Auth key for the default / named tailscale profile |

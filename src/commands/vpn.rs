@@ -37,20 +37,20 @@ fn cmd_use(cwd: &Path, spec: &str) {
         die(format!("no such file: {}", resolved.display()));
     }
     let (_, root) = project_flavor(cwd)
-        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
+        .unwrap_or_else(|| die("no .sbx/config.toml here. run 'sbx init <flavor>' first."));
     if let Err(e) = network::set_key(&root, "vpn", spec) {
-        die(format!("write .sbx/network: {e}"));
+        die(format!("write config.toml: {e}"));
     }
     log(format!("vpn={spec} (resolved: {})", resolved.display()));
 }
 
 fn cmd_auth(cwd: &Path) {
     let (_, root) = project_flavor(cwd)
-        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
+        .unwrap_or_else(|| die("no .sbx/config.toml here. run 'sbx init <flavor>' first."));
     let spec = project_vpn_spec(&root)
         .unwrap_or_else(|| die("no vpn configured (run 'sbx net vpn use ...' first)"));
     let resolved = resolve_ovpn(&spec)
-        .unwrap_or_else(|| die("cannot resolve — set SBX_VPN_DIR or use a full path"));
+        .unwrap_or_else(|| die("cannot resolve - set SBX_VPN_DIR or use a full path"));
     let mut auth_path = resolved.as_os_str().to_owned();
     auth_path.push(".auth");
     let auth_path = PathBuf::from(auth_path);
@@ -84,11 +84,11 @@ fn cmd_inline(cwd: &Path, target: Option<PathBuf>) {
         Some(t) => t,
         None => {
             let (_, root) = project_flavor(cwd)
-                .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
+                .unwrap_or_else(|| die("no .sbx/config.toml here. run 'sbx init <flavor>' first."));
             let spec = project_vpn_spec(&root)
                 .unwrap_or_else(|| die("no vpn configured (run 'sbx net vpn use ...' first)"));
             resolve_ovpn(&spec)
-                .unwrap_or_else(|| die("cannot resolve — set SBX_VPN_DIR or use a full path"))
+                .unwrap_or_else(|| die("cannot resolve - set SBX_VPN_DIR or use a full path"))
         }
     };
     if !target.is_file() {
@@ -126,17 +126,17 @@ fn cmd_inline(cwd: &Path, target: Option<PathBuf>) {
 
 fn cmd_off(cwd: &Path) {
     let (_, root) = project_flavor(cwd)
-        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
+        .unwrap_or_else(|| die("no .sbx/config.toml here. run 'sbx init <flavor>' first."));
     if let Err(e) = network::set_key(&root, "vpn", "") {
-        die(format!("write .sbx/network: {e}"));
+        die(format!("write config.toml: {e}"));
     }
-    log("cleared vpn= from .sbx/network");
+    log("cleared vpn from config.toml");
 }
 
 fn cmd_status(cwd: &Path) {
     match std::env::var("SBX_VPN_DIR") {
         Ok(d) => log(format!("SBX_VPN_DIR={d}")),
-        Err(_) => log("SBX_VPN_DIR not set — use absolute paths in .sbx/network"),
+        Err(_) => log("SBX_VPN_DIR not set - use absolute paths in config.toml"),
     }
     let Some((_, root)) = project_flavor(cwd) else {
         log("not in a project");

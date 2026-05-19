@@ -1,7 +1,8 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::project::{project_name, sbx_file};
+use crate::config::Config;
+use crate::project::project_name;
 use crate::util::{die, log};
 
 pub const BUILTIN_SERVICES: &[&str] = &["redis", "postgres", "mongo", "mysql", "mailpit"];
@@ -51,19 +52,7 @@ pub fn service_template(spec: &str) -> Option<ServiceSpec> {
 }
 
 pub fn project_services(project_root: &Path) -> Vec<String> {
-    let file = sbx_file(project_root, "services");
-    let Ok(content) = std::fs::read_to_string(&file) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for raw in content.lines() {
-        let no_comment = raw.split('#').next().unwrap_or("");
-        let trimmed = no_comment.trim();
-        if !trimmed.is_empty() {
-            out.push(trimmed.to_string());
-        }
-    }
-    out
+    Config::load_or_default(project_root).services.enabled
 }
 
 fn service_short_name(spec: &str) -> String {
@@ -192,4 +181,41 @@ fn is_running(name: &str) -> bool {
         return false;
     };
     !String::from_utf8_lossy(&out.stdout).trim().is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_short_name_strips_registry_and_tag() {
+        assert_eq!(service_short_name("redis:7"), "redis");
+        assert_eq!(service_short_name("library/postgres:16-alpine"), "postgres");
+    }
+
+    #[test]
+    fn service_short_name_strips_digest() {
+        assert_eq!(
+            service_short_name("ghcr.io/org/db:latest@sha256:abc"),
+            "db"
+        );
+    }
+
+    #[test]
+    fn service_short_name_replaces_illegal_chars_and_collapses_dashes() {
+        assert_eq!(service_short_name("my$$weird@@image"), "my-weird");
+    }
+
+    #[test]
+    fn service_short_name_trims_leading_trailing_dashes() {
+        assert_eq!(service_short_name("---foo---"), "foo");
+    }
+
+    #[test]
+    fn service_container_name_format() {
+        assert_eq!(
+            service_container_name("myproj", "redis"),
+            "sbx-svc-myproj-redis"
+        );
+    }
 }

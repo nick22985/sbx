@@ -14,7 +14,7 @@ pub enum Target {
 
 pub fn run(cwd: &Path, target: Target) {
     let (flavor, root) = project_flavor(cwd)
-        .unwrap_or_else(|| die("no .sbx/flavor here. run 'sbx init <flavor>' first."));
+        .unwrap_or_else(|| die("no .sbx/config.toml here. run 'sbx init <flavor>' first."));
     let pname = project_name(&root);
     match target {
         Target::Fs => {

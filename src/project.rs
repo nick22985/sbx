@@ -56,8 +56,26 @@ pub fn private_sbx_dir(root: &Path) -> Option<PathBuf> {
     if !pd.is_dir() {
         return None;
     }
-    let base = shared_root(root).unwrap_or_else(|| root.to_path_buf());
-    Some(pd.join(private_key(&base)).join(".sbx"))
+    if let Some(base) = shared_root(root) {
+        return Some(pd.join(private_key(&base)).join(".sbx"));
+    }
+    // No shared_root (not a git worktree, or git layout broken): try the
+    // direct keying first, but if it doesn't exist, walk up parents to find
+    // an existing private dir. This handles broken worktree refs where
+    // git-common-dir errors but the real project root is a parent.
+    let direct = pd.join(private_key(root)).join(".sbx");
+    if direct.is_dir() {
+        return Some(direct);
+    }
+    let mut cur = root.parent();
+    while let Some(d) = cur {
+        let candidate = pd.join(private_key(d)).join(".sbx");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        cur = d.parent();
+    }
+    Some(direct)
 }
 
 pub fn sbx_file(root: &Path, name: &str) -> PathBuf {
@@ -81,17 +99,18 @@ pub fn sbx_file(root: &Path, name: &str) -> PathBuf {
 }
 
 pub fn sbx_write_dir(root: &Path) -> PathBuf {
-    if root.join(".sbx/flavor").is_file() {
+    let cfg = crate::config::CONFIG_FILENAME;
+    if root.join(".sbx").join(cfg).is_file() {
         return root.join(".sbx");
     }
     let shared = shared_root(root);
     if let Some(s) = &shared
-        && s.join(".sbx/flavor").is_file()
+        && s.join(".sbx").join(cfg).is_file()
     {
         return s.join(".sbx");
     }
     if let Some(priv_dir) = private_sbx_dir(root)
-        && priv_dir.join("flavor").is_file()
+        && priv_dir.join(cfg).is_file()
     {
         return priv_dir;
     }
@@ -114,9 +133,8 @@ pub fn worktree_suffix(root: &Path) -> Option<String> {
     if shared_root(root).is_none() {
         return None;
     }
-    let name_file = root.join(".sbx/name");
-    if let Ok(content) = fs::read_to_string(&name_file) {
-        let s = sanitize_tag(content.trim());
+    if let Some(name) = crate::config::Config::load_or_default(root).name {
+        let s = sanitize_tag(name.trim());
         if !s.is_empty() {
             return Some(s);
         }
@@ -151,12 +169,9 @@ pub fn project_name(root: &Path) -> String {
 /// without colliding. `master` / `main` / non-worktree always return 0;
 /// any other worktree gets a stable hash-derived offset in [1, 9].
 ///
-/// Override per worktree by writing a number to `.sbx/port-offset`.
+/// Override per worktree by setting `port-offset` in `.sbx/config.toml`.
 pub fn port_offset(root: &Path) -> u16 {
-    let pin = root.join(".sbx/port-offset");
-    if let Ok(content) = fs::read_to_string(&pin)
-        && let Ok(n) = content.trim().parse::<u16>()
-    {
+    if let Some(n) = crate::config::Config::load_or_default(root).port_offset {
         return n;
     }
     let Some(suffix) = worktree_suffix(root) else {
@@ -211,23 +226,21 @@ fn current_branch(root: &Path) -> Option<String> {
 }
 
 pub fn project_flavor(start: &Path) -> Option<(String, PathBuf)> {
+    let cfg_name = crate::config::CONFIG_FILENAME;
     let mut dir = start.to_path_buf();
     loop {
-        let candidate = dir.join(".sbx/flavor");
-        if candidate.is_file() {
-            return Some((read_flavor(&candidate)?, dir));
+        if dir.join(".sbx").join(cfg_name).is_file() {
+            return read_flavor_from_config(&dir).map(|f| (f, dir));
         }
-        if let Some(shared) = shared_root(&dir) {
-            let c = shared.join(".sbx/flavor");
-            if c.is_file() {
-                return Some((read_flavor(&c)?, dir));
-            }
+        if let Some(shared) = shared_root(&dir)
+            && shared.join(".sbx").join(cfg_name).is_file()
+        {
+            return read_flavor_from_config(&dir).map(|f| (f, dir));
         }
-        if let Some(priv_dir) = private_sbx_dir(&dir) {
-            let c = priv_dir.join("flavor");
-            if c.is_file() {
-                return Some((read_flavor(&c)?, dir));
-            }
+        if let Some(priv_dir) = private_sbx_dir(&dir)
+            && priv_dir.join(cfg_name).is_file()
+        {
+            return read_flavor_from_config(&dir).map(|f| (f, dir));
         }
         if dir.parent().is_none() || dir == Path::new("/") {
             return None;
@@ -239,8 +252,11 @@ pub fn project_flavor(start: &Path) -> Option<(String, PathBuf)> {
     }
 }
 
-fn read_flavor(path: &Path) -> Option<String> {
-    Some(fs::read_to_string(path).ok()?.trim().to_string())
+fn read_flavor_from_config(root: &Path) -> Option<String> {
+    crate::config::Config::load_or_default(root)
+        .flavor
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 pub fn private_write_dir(cwd: &Path) -> PathBuf {
@@ -329,8 +345,7 @@ mod tests {
     #[test]
     fn sbx_name_overrides_branch_in_worktree() {
         let (_root, _main, wt) = make_repo_with_worktree("wt-name");
-        std::fs::create_dir_all(wt.join(".sbx")).unwrap();
-        std::fs::write(wt.join(".sbx/name"), "exp1\n").unwrap();
+        crate::config::Config::edit(&wt, |c| c.name = Some("exp1".to_string())).unwrap();
         assert_eq!(worktree_suffix(&wt).as_deref(), Some("exp1"));
         assert_eq!(project_name(&wt), "myapp-exp1");
     }

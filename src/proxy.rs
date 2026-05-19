@@ -825,8 +825,7 @@ mod tests {
         std::fs::create_dir_all(&main).unwrap();
         run_git(&main, &["init", "-q", "-b", "master"]);
         crate::config::Config::edit(&main, |c| {
-            c.hostname
-                .insert("app.sbx.localhost".to_string(), 3000);
+            c.hostname.insert("app.sbx.localhost".to_string(), 3000);
         })
         .unwrap();
         run_git(&main, &["add", "."]);

@@ -195,10 +195,7 @@ mod tests {
 
     #[test]
     fn service_short_name_strips_digest() {
-        assert_eq!(
-            service_short_name("ghcr.io/org/db:latest@sha256:abc"),
-            "db"
-        );
+        assert_eq!(service_short_name("ghcr.io/org/db:latest@sha256:abc"), "db");
     }
 
     #[test]

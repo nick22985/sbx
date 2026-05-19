@@ -109,7 +109,11 @@ mod tests {
         .unwrap();
         assert_eq!(
             flavor_start_entry("nvim"),
-            vec!["/bin/bash".to_string(), "-lc".to_string(), "nvim .".to_string()]
+            vec![
+                "/bin/bash".to_string(),
+                "-lc".to_string(),
+                "nvim .".to_string()
+            ]
         );
     }
 

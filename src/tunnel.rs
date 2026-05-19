@@ -608,9 +608,7 @@ mod tests {
     #[test]
     fn parse_via_host_requires_host_colon_port() {
         // bare port on rhs is rejected
-        let t = parse_toml(
-            "[[tunnel]]\ndir = \"via-host\"\nleft = 27017\nright = 27017\n",
-        );
+        let t = parse_toml("[[tunnel]]\ndir = \"via-host\"\nleft = 27017\nright = 27017\n");
         assert!(t.is_empty(), "should reject rhs without ':' for via-host");
         // host without port is rejected
         let t = parse_toml(

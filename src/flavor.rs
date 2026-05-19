@@ -125,7 +125,10 @@ fn parse_cache_lines<S: AsRef<str>>(lines: &[S], container_home: &Path) -> Vec<C
 }
 
 fn flavor_cache_entries(flavor: &str, container_home: &Path) -> Vec<CacheEntry> {
-    parse_cache_lines(&FlavorConfig::load_or_default(flavor).caches, container_home)
+    parse_cache_lines(
+        &FlavorConfig::load_or_default(flavor).caches,
+        container_home,
+    )
 }
 
 fn user_global_cache_entries(container_home: &Path) -> Vec<CacheEntry> {
@@ -133,7 +136,10 @@ fn user_global_cache_entries(container_home: &Path) -> Vec<CacheEntry> {
 }
 
 fn project_cache_entries(project_root: &Path, container_home: &Path) -> Vec<CacheEntry> {
-    parse_cache_lines(&Config::load_or_default(project_root).caches, container_home)
+    parse_cache_lines(
+        &Config::load_or_default(project_root).caches,
+        container_home,
+    )
 }
 
 fn merge_cache_layers(layers: &[Vec<CacheEntry>]) -> Vec<CacheEntry> {
@@ -180,11 +186,7 @@ pub fn container_home() -> PathBuf {
     }
 }
 
-pub fn cache_args(
-    flavor: &str,
-    project_root: Option<&Path>,
-    container_home: &Path,
-) -> Vec<String> {
+pub fn cache_args(flavor: &str, project_root: Option<&Path>, container_home: &Path) -> Vec<String> {
     let mut out = Vec::new();
     if flavor != "claude" {
         out.push("-v".into());
@@ -329,7 +331,12 @@ pub fn image_up_to_date(flavor: &str) -> bool {
     img_mt >= max_ctx
 }
 
-fn project_image_up_to_date(flavor: &str, _project_root: &Path, project_df: &Path, img: &str) -> bool {
+fn project_image_up_to_date(
+    flavor: &str,
+    _project_root: &Path,
+    project_df: &Path,
+    img: &str,
+) -> bool {
     if !docker::image_exists(img) {
         return false;
     }
@@ -712,8 +719,10 @@ mod tests {
         let _g = set_test_paths(cfg, home);
         let container_home = PathBuf::from("/home/nick");
         let args = cache_args("rust", None, &container_home);
-        assert!(args.windows(2).any(|w| w[0] == "-v"
-            && w[1] == "sbx-mise-rust:/home/nick/.local/share/mise"));
+        assert!(
+            args.windows(2)
+                .any(|w| w[0] == "-v" && w[1] == "sbx-mise-rust:/home/nick/.local/share/mise")
+        );
         assert!(args.windows(2).any(|w| w[0] == "-v"
             && w[1] == "sbx-mise-state-rust:/home/nick/.local/state/mise"));
     }
@@ -725,8 +734,10 @@ mod tests {
         let _g = set_test_paths(cfg, home);
         let args = cache_args("claude", None, &PathBuf::from("/home/dev"));
         assert!(!args.iter().any(|a| a.starts_with("sbx-mise-")));
-        assert!(args.windows(2).any(|w| w[0] == "-v"
-            && w[1] == "sbx-claude-local:/home/dev/.local"));
+        assert!(
+            args.windows(2)
+                .any(|w| w[0] == "-v" && w[1] == "sbx-claude-local:/home/dev/.local")
+        );
     }
 
     #[test]

@@ -163,10 +163,7 @@ impl Config {
         let p = Self::path(root);
         let raw = fs::read_to_string(&p)?;
         toml::from_str(&raw).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("{}: {e}", p.display()),
-            )
+            io::Error::new(io::ErrorKind::InvalidData, format!("{}: {e}", p.display()))
         })
     }
 
@@ -267,9 +264,8 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let serialized = toml::to_string_pretty(self).map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("serialize: {e}"))
-        })?;
+        let serialized = toml::to_string_pretty(self)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("serialize: {e}")))?;
         fs::write(path, serialized)?;
         Ok(path.to_path_buf())
     }
@@ -330,9 +326,8 @@ impl GlobalConfig {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let serialized = toml::to_string_pretty(self).map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("serialize: {e}"))
-        })?;
+        let serialized = toml::to_string_pretty(self)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("serialize: {e}")))?;
         fs::write(&path, serialized)?;
         Ok(path)
     }
@@ -367,9 +362,8 @@ impl FlavorConfig {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let serialized = toml::to_string_pretty(self).map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("serialize: {e}"))
-        })?;
+        let serialized = toml::to_string_pretty(self)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("serialize: {e}")))?;
         fs::write(&path, serialized)?;
         Ok(path)
     }
@@ -428,7 +422,10 @@ mod tests {
     fn flavor_config_skip_empty_serializes_to_nothing() {
         let empty = FlavorConfig::default();
         let s = toml::to_string_pretty(&empty).unwrap();
-        assert!(s.trim().is_empty(), "expected empty serialization, got {s:?}");
+        assert!(
+            s.trim().is_empty(),
+            "expected empty serialization, got {s:?}"
+        );
     }
 
     #[test]
@@ -520,7 +517,10 @@ mod tests {
     fn config_default_serializes_to_empty() {
         let cfg = Config::default();
         let s = toml::to_string_pretty(&cfg).unwrap();
-        assert!(s.trim().is_empty(), "expected empty default serialization, got {s:?}");
+        assert!(
+            s.trim().is_empty(),
+            "expected empty default serialization, got {s:?}"
+        );
     }
 
     #[test]

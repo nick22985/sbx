@@ -298,11 +298,7 @@ mod tests {
         .unwrap();
 
         let mounts = resolve(&project_root, Path::new("/home/dev"), &[], None);
-        assert!(
-            mounts.is_empty(),
-            "cwd should be skipped, got {:?}",
-            mounts
-        );
+        assert!(mounts.is_empty(), "cwd should be skipped, got {:?}", mounts);
     }
 
     #[test]

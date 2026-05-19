@@ -28,10 +28,7 @@ pub fn run(cwd: &Path, flavor: &str, private: bool) {
     let path = cfg
         .save_to_dir(&write_dir)
         .unwrap_or_else(|e| die(format!("write {}: {e}", write_dir.display())));
-    log(format!(
-        "marked {} as flavor={flavor}",
-        path.display()
-    ));
+    log(format!("marked {} as flavor={flavor}", path.display()));
     if !docker::image_exists(&image_name(flavor)) {
         build_image(flavor, false);
     }

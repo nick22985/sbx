@@ -250,10 +250,7 @@ mod tests {
 
     #[test]
     fn parse_env_file_skips_comments_blanks_and_invalid_names() {
-        let p = tmp_file(
-            "bad",
-            "# comment\n\n1BAD=value\nGOOD=ok\nno_equals_line\n",
-        );
+        let p = tmp_file("bad", "# comment\n\n1BAD=value\nGOOD=ok\nno_equals_line\n");
         let entries = parse_env_file(&p);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].key, "GOOD");

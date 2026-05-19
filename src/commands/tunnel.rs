@@ -393,11 +393,7 @@ pub fn run(cwd: &Path, action: Action<'_>) {
                 .iter()
                 .any(|t| t.dir == dir.as_str() && t.left == left_port)
             {
-                die(format!(
-                    "{} {} already configured",
-                    dir.as_str(),
-                    left_port,
-                ));
+                die(format!("{} {} already configured", dir.as_str(), left_port,));
             }
             let path = Config::edit(&root, |c| {
                 c.tunnels.push(ConfigTunnel {

@@ -441,7 +441,10 @@ mod tests {
 
         let count = migrate_global();
         assert_eq!(count, 0);
-        assert!(cfg.join("mounts").exists(), "legacy file should not move when config.toml present");
+        assert!(
+            cfg.join("mounts").exists(),
+            "legacy file should not move when config.toml present"
+        );
     }
 
     #[test]
@@ -490,7 +493,10 @@ mod tests {
 
         let count = relocate_top_level_flavor_dirs();
         assert_eq!(count, 0);
-        assert!(cfg.join("legacy/Dockerfile").is_file(), "legacy must not move");
+        assert!(
+            cfg.join("legacy/Dockerfile").is_file(),
+            "legacy must not move"
+        );
     }
 
     #[test]
@@ -508,10 +514,8 @@ mod tests {
 
         let count = migrate_project_dir(&dir);
         assert_eq!(count, 8);
-        let cfg: Config = toml::from_str(
-            &fs::read_to_string(dir.join("config.toml")).unwrap(),
-        )
-        .unwrap();
+        let cfg: Config =
+            toml::from_str(&fs::read_to_string(dir.join("config.toml")).unwrap()).unwrap();
         assert_eq!(cfg.flavor.as_deref(), Some("npm"));
         assert_eq!(cfg.ports, vec![8080, 3000]);
         assert_eq!(cfg.start.as_deref(), Some("npm run dev"));
@@ -546,7 +550,10 @@ mod tests {
         write(&dir.join("flavor"), "old\n");
         let count = migrate_project_dir(&dir);
         assert_eq!(count, 0);
-        assert!(dir.join("flavor").is_file(), "legacy must not move when config.toml present");
+        assert!(
+            dir.join("flavor").is_file(),
+            "legacy must not move when config.toml present"
+        );
     }
 
     #[test]
@@ -594,4 +601,3 @@ mod tests {
         assert_eq!(m.len(), 2);
     }
 }
-

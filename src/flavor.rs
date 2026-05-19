@@ -84,6 +84,13 @@ impl CacheEntry {
 }
 
 fn parse_cache_lines<S: AsRef<str>>(lines: &[S], container_home: &Path) -> Vec<CacheEntry> {
+    let resolve = |raw: &str| -> String {
+        if raw.starts_with('/') {
+            raw.to_string()
+        } else {
+            container_home.join(raw).display().to_string()
+        }
+    };
     let mut out = Vec::new();
     for raw in lines {
         let line = raw.as_ref().split('#').next().unwrap_or("").trim();
@@ -99,15 +106,18 @@ fn parse_cache_lines<S: AsRef<str>>(lines: &[S], container_home: &Path) -> Vec<C
                 continue;
             };
             let name = name.trim().to_string();
-            let container = container.trim().to_string();
-            if name.is_empty() || container.is_empty() {
+            let container_raw = container.trim();
+            if name.is_empty() || container_raw.is_empty() {
                 continue;
             }
-            out.push(CacheEntry::Volume { name, container });
+            out.push(CacheEntry::Volume {
+                name,
+                container: resolve(container_raw),
+            });
             continue;
         }
         let (host_rel, container) = match line.split_once(':') {
-            Some((h, c)) => (h.trim().to_string(), c.trim().to_string()),
+            Some((h, c)) => (h.trim().to_string(), resolve(c.trim())),
             None => (
                 line.to_string(),
                 container_home.join(line).display().to_string(),
@@ -188,18 +198,6 @@ pub fn container_home() -> PathBuf {
 
 pub fn cache_args(flavor: &str, project_root: Option<&Path>, container_home: &Path) -> Vec<String> {
     let mut out = Vec::new();
-    if flavor != "claude" {
-        out.push("-v".into());
-        out.push(format!(
-            "sbx-mise-{flavor}:{}/.local/share/mise",
-            container_home.display()
-        ));
-        out.push("-v".into());
-        out.push(format!(
-            "sbx-mise-state-{flavor}:{}/.local/state/mise",
-            container_home.display()
-        ));
-    }
     for entry in effective_cache_entries(flavor, project_root, container_home) {
         match entry {
             CacheEntry::HostBind {
@@ -217,25 +215,11 @@ pub fn cache_args(flavor: &str, project_root: Option<&Path>, container_home: &Pa
             }
         }
     }
-    if flavor == "claude" {
-        out.push("-v".into());
-        out.push(format!(
-            "sbx-claude-local:{}/.local",
-            container_home.display()
-        ));
-    }
     out
 }
 
 pub fn flavor_volumes(flavor: &str) -> Vec<String> {
-    let mut v: Vec<String> = match flavor {
-        "claude" => vec!["sbx-claude-local".into()],
-        _ => vec![],
-    };
-    if flavor != "claude" {
-        v.push(format!("sbx-mise-{flavor}"));
-        v.push(format!("sbx-mise-state-{flavor}"));
-    }
+    let mut v: Vec<String> = Vec::new();
     let container_home = flavor_container_home(flavor);
     for entry in flavor_cache_entries(flavor, &container_home) {
         if let CacheEntry::Volume { name, .. } = entry {
@@ -645,6 +629,48 @@ mod tests {
     }
 
     #[test]
+    fn volume_relative_container_path_resolves_under_container_home() {
+        let entries = parse_cache_lines(
+            &["@sbx-claude-local:.local"],
+            &PathBuf::from("/home/nick"),
+        );
+        assert_eq!(
+            entries,
+            vec![CacheEntry::Volume {
+                name: "sbx-claude-local".into(),
+                container: "/home/nick/.local".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn volume_absolute_container_path_passes_through() {
+        let entries = parse_cache_lines(&["@vol:/opt/data"], &PathBuf::from("/home/nick"));
+        assert_eq!(
+            entries,
+            vec![CacheEntry::Volume {
+                name: "vol".into(),
+                container: "/opt/data".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn host_bind_relative_container_path_resolves_under_container_home() {
+        let entries = parse_cache_lines(
+            &[".local/share/mise:.local/share/mise"],
+            &PathBuf::from("/home/nick"),
+        );
+        assert_eq!(
+            entries,
+            vec![CacheEntry::HostBind {
+                host_rel: ".local/share/mise".into(),
+                container: "/home/nick/.local/share/mise".into(),
+            }]
+        );
+    }
+
+    #[test]
     fn project_layer_overrides_global_layer() {
         let flavor: Vec<CacheEntry> = parse_cache_lines::<&str>(&[], &dev_home());
         let global = parse_cache_lines(&["@globalvol:/home/dev/x"], &dev_home());
@@ -713,31 +739,53 @@ mod tests {
     }
 
     #[test]
-    fn cache_args_mise_volumes_use_container_home() {
+    fn cache_args_emits_only_user_declared_entries() {
         let cfg = tmp_dir("ca-mise-cfg");
         let home = tmp_dir("ca-mise-home");
         let _g = set_test_paths(cfg, home);
-        let container_home = PathBuf::from("/home/nick");
-        let args = cache_args("rust", None, &container_home);
-        assert!(
-            args.windows(2)
-                .any(|w| w[0] == "-v" && w[1] == "sbx-mise-rust:/home/nick/.local/share/mise")
-        );
-        assert!(args.windows(2).any(|w| w[0] == "-v"
-            && w[1] == "sbx-mise-state-rust:/home/nick/.local/state/mise"));
+        // No flavor / global / project config written, so caches are empty.
+        let args = cache_args("rust", None, &PathBuf::from("/home/nick"));
+        assert!(args.is_empty(), "expected no hardcoded mounts, got {args:?}");
     }
 
     #[test]
-    fn cache_args_skips_mise_volumes_for_claude_flavor() {
+    fn cache_args_passes_through_flavor_config_volumes() {
+        let cfg = tmp_dir("ca-flavor-vols-cfg");
+        let home = tmp_dir("ca-flavor-vols-home");
+        let _g = set_test_paths(cfg, home);
+        FlavorConfig {
+            caches: vec![
+                "@sbx-mise-rust:.local/share/mise".into(),
+                "@sbx-mise-state-rust:.local/state/mise".into(),
+            ],
+            ..Default::default()
+        }
+        .save("rust")
+        .unwrap();
+        let args = cache_args("rust", None, &PathBuf::from("/home/nick"));
+        assert!(
+            args.windows(2)
+                .any(|w| w[0] == "-v" && w[1] == "sbx-mise-rust:/home/nick/.local/share/mise"),
+            "missing share mount in {args:?}"
+        );
+        assert!(
+            args.windows(2)
+                .any(|w| w[0] == "-v" && w[1] == "sbx-mise-state-rust:/home/nick/.local/state/mise"),
+            "missing state mount in {args:?}"
+        );
+    }
+
+    #[test]
+    fn cache_args_no_implicit_claude_local_volume() {
         let cfg = tmp_dir("ca-claude-cfg");
         let home = tmp_dir("ca-claude-home");
         let _g = set_test_paths(cfg, home);
         let args = cache_args("claude", None, &PathBuf::from("/home/dev"));
-        assert!(!args.iter().any(|a| a.starts_with("sbx-mise-")));
         assert!(
-            args.windows(2)
-                .any(|w| w[0] == "-v" && w[1] == "sbx-claude-local:/home/dev/.local")
+            !args.iter().any(|a| a.starts_with("sbx-claude-local")),
+            "claude flavor should not get an implicit sbx-claude-local mount: {args:?}"
         );
+        assert!(args.is_empty(), "expected no hardcoded mounts, got {args:?}");
     }
 
     #[test]

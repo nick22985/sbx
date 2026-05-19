@@ -2,10 +2,13 @@
 # Lives at $XDG_CONFIG_HOME/sbx/flavors/rust/config.toml.
 #
 # Syntax (one entry per line):
-#   "<host_rel>"                          host bind, container = /home/dev/<host_rel>
+#   "<host_rel>"                          host bind, container = <container_home>/<host_rel>
 #   "<host_rel>:<container_path>"         host bind, explicit container path
 #   "@<volume_name>:<container_path>"     named docker volume (auto-tracked by clean/purge)
+# Container paths that don't start with '/' resolve under container_home.
 caches = [
     ".cargo/registry",
     ".cargo/git",
+    "@sbx-mise-rust:.local/share/mise",
+    "@sbx-mise-state-rust:.local/state/mise",
 ]

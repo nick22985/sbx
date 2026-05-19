@@ -2,15 +2,18 @@
 # Lives at $XDG_CONFIG_HOME/sbx/flavors/java/config.toml.
 #
 # Syntax (one entry per line):
-#   "<host_rel>"                          host bind, container = /home/dev/<host_rel>
+#   "<host_rel>"                          host bind, container = <container_home>/<host_rel>
 #   "<host_rel>:<container_path>"         host bind, explicit container path
 #   "@<volume_name>:<container_path>"     named docker volume (auto-tracked by clean/purge)
+# Container paths that don't start with '/' resolve under container_home.
 #
 # Defaults below bind the host's ~/.m2 / ~/.gradle so settings.xml
 # credentials and the local repo cache are shared with the host. Swap for
-# "@sbx-maven-cache:/home/dev/.m2" via the global or project config.toml
-# if you'd rather keep the cache in an isolated docker volume.
+# "@sbx-maven-cache:.m2" via the global or project config.toml if you'd
+# rather keep the cache in an isolated docker volume.
 caches = [
     ".m2",
     ".gradle",
+    "@sbx-mise-java:.local/share/mise",
+    "@sbx-mise-state-java:.local/state/mise",
 ]

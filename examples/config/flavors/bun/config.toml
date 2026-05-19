@@ -2,9 +2,12 @@
 # Lives at $XDG_CONFIG_HOME/sbx/flavors/bun/config.toml.
 #
 # Syntax (one entry per line):
-#   "<host_rel>"                          host bind, container = /home/dev/<host_rel>
+#   "<host_rel>"                          host bind, container = <container_home>/<host_rel>
 #   "<host_rel>:<container_path>"         host bind, explicit container path
 #   "@<volume_name>:<container_path>"     named docker volume (auto-tracked by clean/purge)
+# Container paths that don't start with '/' resolve under container_home.
 caches = [
     ".bun/install/cache",
+    "@sbx-mise-bun:.local/share/mise",
+    "@sbx-mise-state-bun:.local/state/mise",
 ]

@@ -9,6 +9,8 @@ caches = [
     ".cache/nvim",
     ".vim/undodir",
     ".supermaven",
+    "@sbx-mise-nvim:.local/share/mise",
+    "@sbx-mise-state-nvim:.local/state/mise",
 ]
 
 start = "nvim ."

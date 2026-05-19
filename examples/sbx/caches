@@ -1,0 +1,22 @@
+# Per-project cache mounts for this project. Layered on top of the flavor's
+# `caches` file and `~/.config/sbx/caches`. Later layers override earlier
+# ones on the same container path.
+#
+# Syntax (one per line, `#` comments allowed):
+#   <host_rel>                            host bind, container = /home/dev/<host_rel>
+#                                         (host_rel is relative to your host $HOME)
+#   <host_rel>:<container_path>           host bind, explicit container path
+#   @<volume_name>:<container_path>       named docker volume
+#
+# Missing host paths are auto-created on first run.
+
+# Add an extra cache that only this project needs:
+.cache/pre-commit
+
+# Pin this project to an isolated docker volume for Maven, even though the
+# global file binds the host's ~/.m2 — useful when the project's lockfile
+# pulls in artifacts you don't want polluting your host cache.
+# @sbx-maven-this-project:/home/dev/.m2
+
+# Or force a specific tool's cache to be project-local instead of shared:
+# @sbx-cargo-this-project:/home/dev/.cargo/registry

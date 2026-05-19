@@ -711,7 +711,7 @@ pub fn run_container(spec: RunSpec<'_>) -> i32 {
         .iter()
         .map(|m| m.container.clone())
         .collect();
-    let cache = crate::flavor::cache_args(spec.flavor);
+    let cache = crate::flavor::cache_args(spec.flavor, Some(spec.project_root));
     let mut i = 0;
     while i < cache.len() {
         if cache[i] == "-v"

@@ -30,6 +30,7 @@ cp ../sbx/examples/sbx/hostname      .sbx/hostname
 | `docker`          | Marker. Forwards the host docker socket. **Trusted projects only.** | Existence-only; content ignored. |
 | `host-proxy`      | Marker + optional allowlist for the host tinyproxy sidecar.    | One hostname per line, `#` comments. Empty = unrestricted. |
 | `mounts`          | Extra host mounts for every sbx session.                       | `host[:container[:ro]]` per line, `#` comments ok. |
+| `caches`          | Per-project cache mounts, layered on flavor + global caches.   | `host_rel[:container]` or `@volume:container` per line. |
 | `claude-profile`  | Pins a named claude profile for this project.                  | One line, the profile name.           |
 
 `flavor` is the only required file — everything else is opt-in.

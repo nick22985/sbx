@@ -5,6 +5,8 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use std::collections::HashMap;
+
 use crate::docker;
 use crate::project::{project_base_name, sbx_file};
 use crate::util::{config_dir, die, home_dir, log};
@@ -71,10 +73,16 @@ enum CacheEntry {
     Volume { name: String, container: String },
 }
 
-fn cache_entries(flavor: &str) -> Vec<CacheEntry> {
-    let Ok(body) = fs::read_to_string(flavor_dir(flavor).join("caches")) else {
-        return Vec::new();
-    };
+impl CacheEntry {
+    fn container(&self) -> &str {
+        match self {
+            CacheEntry::HostBind { container, .. } => container,
+            CacheEntry::Volume { container, .. } => container,
+        }
+    }
+}
+
+fn parse_caches_body(body: &str) -> Vec<CacheEntry> {
     let mut out = Vec::new();
     for raw in body.lines() {
         let line = raw.split('#').next().unwrap_or("").trim();
@@ -111,7 +119,52 @@ fn cache_entries(flavor: &str) -> Vec<CacheEntry> {
     out
 }
 
-pub fn cache_args(flavor: &str) -> Vec<String> {
+fn read_caches_file(path: &Path) -> Vec<CacheEntry> {
+    match fs::read_to_string(path) {
+        Ok(body) => parse_caches_body(&body),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn flavor_cache_entries(flavor: &str) -> Vec<CacheEntry> {
+    read_caches_file(&flavor_dir(flavor).join("caches"))
+}
+
+fn user_global_cache_entries() -> Vec<CacheEntry> {
+    read_caches_file(&config_dir().join("caches"))
+}
+
+fn project_cache_entries(project_root: &Path) -> Vec<CacheEntry> {
+    read_caches_file(&sbx_file(project_root, "caches"))
+}
+
+fn merge_cache_layers(layers: &[Vec<CacheEntry>]) -> Vec<CacheEntry> {
+    let mut out: Vec<CacheEntry> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for layer in layers {
+        for entry in layer {
+            let key = entry.container().to_string();
+            match index.get(&key) {
+                Some(&i) => out[i] = entry.clone(),
+                None => {
+                    index.insert(key, out.len());
+                    out.push(entry.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+fn effective_cache_entries(flavor: &str, project_root: Option<&Path>) -> Vec<CacheEntry> {
+    let mut layers = vec![flavor_cache_entries(flavor), user_global_cache_entries()];
+    if let Some(root) = project_root {
+        layers.push(project_cache_entries(root));
+    }
+    merge_cache_layers(&layers)
+}
+
+pub fn cache_args(flavor: &str, project_root: Option<&Path>) -> Vec<String> {
     let mut out = Vec::new();
     if flavor != "claude" {
         out.push("-v".into());
@@ -121,7 +174,7 @@ pub fn cache_args(flavor: &str) -> Vec<String> {
             "sbx-mise-state-{flavor}:/home/dev/.local/state/mise"
         ));
     }
-    for entry in cache_entries(flavor) {
+    for entry in effective_cache_entries(flavor, project_root) {
         match entry {
             CacheEntry::HostBind {
                 host_rel,
@@ -154,7 +207,7 @@ pub fn flavor_volumes(flavor: &str) -> Vec<String> {
         v.push(format!("sbx-mise-{flavor}"));
         v.push(format!("sbx-mise-state-{flavor}"));
     }
-    for entry in cache_entries(flavor) {
+    for entry in flavor_cache_entries(flavor) {
         if let CacheEntry::Volume { name, .. } = entry {
             v.push(name);
         }
@@ -378,5 +431,120 @@ mod libc_compat {
     unsafe extern "C" {
         pub fn getuid() -> u32;
         pub fn getgid() -> u32;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_bare_host_rel_defaults_container_under_home_dev() {
+        let entries = parse_caches_body(".npm\n");
+        assert_eq!(
+            entries,
+            vec![CacheEntry::HostBind {
+                host_rel: ".npm".into(),
+                container: "/home/dev/.npm".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_explicit_container_path() {
+        let entries = parse_caches_body(".m2:/home/dev/.m2\n");
+        assert_eq!(
+            entries,
+            vec![CacheEntry::HostBind {
+                host_rel: ".m2".into(),
+                container: "/home/dev/.m2".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_named_volume() {
+        let entries = parse_caches_body("@sbx-maven-cache:/home/dev/.m2\n");
+        assert_eq!(
+            entries,
+            vec![CacheEntry::Volume {
+                name: "sbx-maven-cache".into(),
+                container: "/home/dev/.m2".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn strips_comments_and_blanks() {
+        let entries = parse_caches_body("# comment\n\n.npm  # trailing\n");
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(&entries[0], CacheEntry::HostBind { host_rel, .. } if host_rel == ".npm"));
+    }
+
+    #[test]
+    fn malformed_volume_line_skipped() {
+        let entries = parse_caches_body("@bad-no-colon\n.npm\n");
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn user_entry_overrides_flavor_on_same_container_path() {
+        let flavor = parse_caches_body("@sbx-maven-cache:/home/dev/.m2\n");
+        let user = parse_caches_body("@sbx-maven-mine:/home/dev/.m2\n");
+        let merged = merge_cache_layers(&[flavor, user]);
+        assert_eq!(
+            merged,
+            vec![CacheEntry::Volume {
+                name: "sbx-maven-mine".into(),
+                container: "/home/dev/.m2".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn host_bind_overrides_volume_on_same_container_path() {
+        let flavor = parse_caches_body("@sbx-maven-cache:/home/dev/.m2\n");
+        let user = parse_caches_body(".m2:/home/dev/.m2\n");
+        let merged = merge_cache_layers(&[flavor, user]);
+        assert_eq!(
+            merged,
+            vec![CacheEntry::HostBind {
+                host_rel: ".m2".into(),
+                container: "/home/dev/.m2".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn distinct_container_paths_layer_additively() {
+        let flavor = parse_caches_body(".npm\n");
+        let global = parse_caches_body(".cargo/registry\n");
+        let project = parse_caches_body(".gradle\n");
+        let merged = merge_cache_layers(&[flavor, global, project]);
+        assert_eq!(merged.len(), 3);
+        let containers: Vec<&str> = merged.iter().map(|e| e.container()).collect();
+        assert_eq!(
+            containers,
+            vec![
+                "/home/dev/.npm",
+                "/home/dev/.cargo/registry",
+                "/home/dev/.gradle",
+            ]
+        );
+    }
+
+    #[test]
+    fn project_layer_overrides_global_layer() {
+        let flavor = parse_caches_body("");
+        let global = parse_caches_body("@globalvol:/home/dev/x\n");
+        let project = parse_caches_body("@projectvol:/home/dev/x\n");
+        let merged = merge_cache_layers(&[flavor, global, project]);
+        assert_eq!(
+            merged,
+            vec![CacheEntry::Volume {
+                name: "projectvol".into(),
+                container: "/home/dev/x".into(),
+            }]
+        );
     }
 }

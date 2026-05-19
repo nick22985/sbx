@@ -10,3 +10,4 @@
 # local repo cache are shared with the host. Swap for `@sbx-maven-cache:/home/dev/.m2`
 # if you'd rather keep the cache in an isolated docker volume.
 .m2
+.gradle

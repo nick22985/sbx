@@ -189,6 +189,40 @@ top* of the volume:
 The container still gets the cache volume at `~/.m2/`, but Maven now
 picks up your host `settings.xml` (auth, mirrors, etc.).
 
+### Caches
+
+Flavor authors ship a `caches` file alongside their `Dockerfile`
+(`~/.config/sbx/<flavor>/caches`) declaring the host paths or named
+docker volumes that survive between runs (e.g. `~/.npm`, `~/.cargo`,
+`@sbx-maven-cache:/home/dev/.m2`). Two extra layers let you add to or
+override those without editing the flavor file:
+
+- `$XDG_CONFIG_HOME/sbx/caches`, global, applied to **every** sbx
+  session regardless of flavor. Good for caches you always want shared
+  with the host (e.g. `.cargo/registry`, `.npm`).
+- `./.sbx/caches`, per-project, layered on top of the global file.
+
+User layers use the same syntax as flavor `caches` files:
+
+```
+.cache/pip                            # host bind: ~/.cache/pip -> /home/dev/.cache/pip
+.m2:/home/dev/.m2                     # host bind, explicit container path
+@sbx-maven-mine:/home/dev/.m2         # named docker volume
+```
+
+Override semantics: entries are merged by **container path**, with the
+project file winning over the global file winning over the flavor file.
+So if the `java` flavor ships `@sbx-maven-cache:/home/dev/.m2` and you'd
+rather use your host's `~/.m2`, drop `.m2:/home/dev/.m2` into
+`~/.config/sbx/caches` (or just `./.sbx/caches` for one project) and the
+host bind replaces the named volume. Missing host paths are auto-created
+on first run.
+
+User-defined volumes are user-owned: `sbx clean` / `sbx purge` only
+remove volumes declared in the flavor's own `caches` file, so renaming
+the active volume via an override won't trigger surprise deletions of
+your data.
+
 ### GUI forwarding (opt-in)
 
 `sbx config gui on` touches `./.sbx/gui`; the next container start mounts
@@ -434,6 +468,7 @@ escape the sandbox. Only enable this when you trust what's running inside.
 - `$XDG_CONFIG_HOME/sbx/<flavor>/Dockerfile`, base image source
 - `$XDG_CONFIG_HOME/sbx/env`                  - persistent env (KEY=value, chmod 600)
 - `$XDG_CONFIG_HOME/sbx/mounts`               - extra host paths for *every* sbx session (all flavors)
+- `$XDG_CONFIG_HOME/sbx/caches`               - extra cache mounts for *every* sbx session, layered on top of the flavor's `caches` file
 - `$XDG_CONFIG_HOME/sbx/claude-profiles/<n>/`, alternate `~/.claude` per profile
 - `./.sbx/flavor`                             - per-project marker
 - `./.sbx/Dockerfile`                         - optional, extends base
@@ -449,6 +484,7 @@ escape the sandbox. Only enable this when you trust what's running inside.
 - `./.sbx/gui`                                - touched file → forward host X11 / Wayland sockets for GUI apps
 - `./.sbx/host-proxy`                         - marker + optional allowlist (one host per line) for the host tinyproxy sidecar
 - `./.sbx/mounts`                             - extra host paths, one mount per line (`host[:container[:ro]]`)
+- `./.sbx/caches`                             - per-project cache mounts, layered on top of `~/.config/sbx/caches` and the flavor's `caches`
 - `./.sbx/claude-profile`                     - pins this project to a named claude profile
 - `./.sbx/name`                               - overrides the auto worktree suffix (see below)
 - `./.sbx/port-offset`                        - override the auto-derived per-worktree port offset (single integer)

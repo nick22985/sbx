@@ -20,7 +20,9 @@ sbx shell            # drop into the sandbox
 ```
 
 Optional: copy `mounts` to `~/.config/sbx/mounts` to mount caches like
-`~/.m2` / `~/.gradle` into every sbx session.
+`~/.m2` / `~/.gradle` into every sbx session, and `caches` to
+`~/.config/sbx/caches` to bind your host's tool caches (npm, cargo, pip,
+go, maven, gradle, …) into every flavor.
 
 ## Layout
 
@@ -36,6 +38,7 @@ claude/      Heavyweight image with node + bun + rust + java + python +
              the Claude Code CLI + graphify. Used by `sbx claude`. Its
              entrypoint runs `graphify install` once into ~/.claude.
 mounts       Example global mount list (applies to every sbx session).
+caches       Example global cache list (host binds for npm/cargo/pip/...).
 ```
 
 ## What's in `base/`

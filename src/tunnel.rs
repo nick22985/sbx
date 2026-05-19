@@ -643,9 +643,9 @@ mod tests {
             },
         ];
         let s = via_host_script(&tunnels, "172.17.0.1").expect("script");
-        assert!(s.contains(
-            "TCP-LISTEN:27017,fork,reuseaddr,bind=172.17.0.1 TCP:192.168.1.67:27017"
-        ));
+        assert!(
+            s.contains("TCP-LISTEN:27017,fork,reuseaddr,bind=172.17.0.1 TCP:192.168.1.67:27017")
+        );
         // out: entries don't belong in this sidecar
         assert!(!s.contains("3000"));
         assert!(s.trim_end().ends_with("wait"));

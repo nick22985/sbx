@@ -28,7 +28,9 @@ pub fn run(cwd: &Path, action: Action) {
                 "GUI forwarding enabled for this project ({})",
                 write_file.display()
             ));
-            log("next container start will mount the Wayland + X11 sockets and forward DISPLAY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR");
+            log(
+                "next container start will mount the Wayland + X11 sockets and forward DISPLAY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR",
+            );
         }
         Action::Off => {
             let _ = fs::remove_file(&write_file);

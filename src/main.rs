@@ -3,8 +3,8 @@ use std::io;
 
 use sbx::cli::{
     ClaudeCmd, Cli, Cmd, ConfigCmd, DockerCmd, EnvCmd, GuiCmd, HostProxyCmd, HostnameCmd, NetCmd,
-    PortCmd, ProfileCmd, ProxyCmd, PublicCmd, ServiceCmd, SshCmd, StartCmd, TailscaleCmd, TunnelCmd,
-    TunnelTopCmd, VpnCmd,
+    PortCmd, ProfileCmd, ProxyCmd, PublicCmd, ServiceCmd, SshCmd, StartCmd, TailscaleCmd,
+    TunnelCmd, TunnelTopCmd, VpnCmd,
 };
 use sbx::commands;
 use sbx::env_file;

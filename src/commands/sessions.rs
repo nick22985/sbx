@@ -33,6 +33,7 @@ enum Kind {
     Vpn,
     Tailscale,
     Tunnel,
+    ViaHost,
     Proxy,
     Public,
     HostProxy,
@@ -47,6 +48,7 @@ impl Kind {
             Kind::Vpn => "vpn",
             Kind::Tailscale => "tailscale",
             Kind::Tunnel => "tunnel",
+            Kind::ViaHost => "via-host",
             Kind::Proxy => "proxy",
             Kind::Public => "public",
             Kind::HostProxy => "host-proxy",
@@ -92,6 +94,13 @@ fn parse_row(line: &str) -> Option<Row> {
     } else if let Some(after) = rest.strip_prefix("tailscale-") {
         (
             Kind::Tailscale,
+            String::new(),
+            after.to_string(),
+            String::new(),
+        )
+    } else if let Some(after) = rest.strip_prefix("via-host-") {
+        (
+            Kind::ViaHost,
             String::new(),
             after.to_string(),
             String::new(),

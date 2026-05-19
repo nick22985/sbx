@@ -20,6 +20,7 @@ pub struct Cleanup {
     tailscale_sidecar: Option<String>,
     tunnel_sidecar: Option<String>,
     tunnel_exposer: Option<String>,
+    via_host_sidecar: Option<String>,
     proxy_attached: bool,
     proxy_route_project: Option<String>,
     public_project_fragment: Option<String>,
@@ -44,6 +45,9 @@ impl Cleanup {
         }
         if let Some(sidecar) = self.tunnel_sidecar.take() {
             tunnel::stop_sidecar_if_idle(&sidecar);
+        }
+        if let Some(sidecar) = self.via_host_sidecar.take() {
+            tunnel::stop_via_host_sidecar(&sidecar);
         }
         for s in self.services.drain(..) {
             service::stop_service(&s);
@@ -198,6 +202,10 @@ pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32
         && let Some(exposer) = tunnel::start_exposer(&pname, owner, &tunnels)
     {
         cleanup.tunnel_exposer = Some(exposer);
+    }
+
+    if let Some(via_host) = tunnel::start_via_host_sidecar(project_root, &tunnels) {
+        cleanup.via_host_sidecar = Some(via_host);
     }
 
     let mut extra_host_args: Vec<String> = Vec::new();

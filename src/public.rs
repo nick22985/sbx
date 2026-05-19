@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -234,6 +235,9 @@ pub fn force_stop() -> bool {
 }
 
 pub fn start_sidecar() {
+    if merged_hostnames().is_empty() {
+        return;
+    }
     crate::proxy::ensure_network();
     let cf = cf_dir();
     if sidecar_running() {
@@ -271,8 +275,10 @@ pub fn start_sidecar() {
 }
 
 pub fn apply_config() {
+    reconcile_orphan_fragments();
     if merged_hostnames().is_empty() {
         force_stop();
+        let _ = std::fs::remove_file(config_yml());
         return;
     }
     let _ = render_config_yml();
@@ -290,7 +296,79 @@ pub fn apply_config() {
 pub fn stop_sidecar_if_idle() {
     if merged_hostnames().is_empty() {
         force_stop();
+        let _ = std::fs::remove_file(config_yml());
     }
+}
+
+/// Remove fragments whose owning project no longer has a running container.
+/// Fragments touched in the last 30s are kept — a session in startup may have
+/// just written one before its container is visible in `docker ps`.
+pub fn reconcile_orphan_fragments() {
+    let Some(running) = running_sbx_project_names() else {
+        return;
+    };
+    let dir = projects_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let Some(name) = entry.file_name().to_str().map(String::from) else {
+            continue;
+        };
+        if running.contains(&name) {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata()
+            && let Ok(mtime) = meta.modified()
+            && let Ok(age) = now.duration_since(mtime)
+            && age.as_secs() < 30
+        {
+            continue;
+        }
+        let _ = std::fs::remove_file(entry.path());
+        log(format!(
+            "public: pruned orphan fragment for {name} (no live container)"
+        ));
+    }
+}
+
+fn running_sbx_project_names() -> Option<HashSet<String>> {
+    let out = Command::new("docker")
+        .args(["ps", "--filter", "name=^sbx-", "--format", "{{.Names}}"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let names: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut set: HashSet<String> = HashSet::new();
+    if names.is_empty() {
+        return Some(set);
+    }
+    let mut args: Vec<String> = vec![
+        "inspect".into(),
+        "--format".into(),
+        "{{range .Config.Env}}{{println .}}{{end}}".into(),
+    ];
+    args.extend(names);
+    let out = Command::new("docker").args(&args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        if let Some(rest) = line.strip_prefix("SBX_PROJECT=") {
+            let v = rest.trim();
+            if !v.is_empty() {
+                set.insert(v.to_string());
+            }
+        }
+    }
+    Some(set)
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ pub enum Direction {
     Out,
     In,
     Via,
+    ViaHost,
 }
 
 impl Direction {
@@ -19,6 +20,7 @@ impl Direction {
             Direction::Out => "out",
             Direction::In => "in",
             Direction::Via => "via",
+            Direction::ViaHost => "via-host",
         }
     }
 
@@ -27,6 +29,7 @@ impl Direction {
             "out" => Some(Direction::Out),
             "in" => Some(Direction::In),
             "via" => Some(Direction::Via),
+            "via-host" | "viahost" => Some(Direction::ViaHost),
             _ => None,
         }
     }
@@ -56,7 +59,7 @@ pub fn parse(contents: &str) -> Vec<Tunnel> {
         };
         let Some(direction) = Direction::parse(dir_part) else {
             log(format!(
-                "ignoring unknown direction in .sbx/tunnels: {line} (use out/in/via)"
+                "ignoring unknown direction in .sbx/tunnels: {line} (use out/in/via/via-host)"
             ));
             continue;
         };
@@ -85,7 +88,7 @@ pub fn parse(contents: &str) -> Vec<Tunnel> {
                     continue;
                 }
             }
-            Direction::Via => {
+            Direction::Via | Direction::ViaHost => {
                 if !rhs.contains(':') {
                     log(format!(
                         "ignoring malformed right side in .sbx/tunnels (need host:port): {line}"
@@ -123,7 +126,7 @@ pub fn publish_args(tunnels: &[Tunnel]) -> Vec<String> {
                 (right, t.left)
             }
             Direction::Via => (t.left, t.left),
-            Direction::In => continue,
+            Direction::In | Direction::ViaHost => continue,
         };
         if !seen.insert((host_port, cont_port)) {
             continue;
@@ -159,7 +162,7 @@ pub fn socat_script(tunnels: &[Tunnel]) -> Option<String> {
                     r = t.right
                 ));
             }
-            Direction::Out => {}
+            Direction::Out | Direction::ViaHost => {}
         }
     }
     if cmds.is_empty() {
@@ -178,6 +181,12 @@ pub fn needs_in_netns_forwarder(tunnels: &[Tunnel]) -> bool {
     tunnels
         .iter()
         .any(|t| matches!(t.direction, Direction::In | Direction::Via))
+}
+
+pub fn has_via_host_tunnels(tunnels: &[Tunnel]) -> bool {
+    tunnels
+        .iter()
+        .any(|t| matches!(t.direction, Direction::ViaHost))
 }
 
 pub fn sidecar_name(pname: &str) -> String {
@@ -325,7 +334,7 @@ fn exposer_script(tunnels: &[Tunnel], owner_ip: &str) -> Option<String> {
                     l = t.left
                 ));
             }
-            Direction::In => {}
+            Direction::In | Direction::ViaHost => {}
         }
     }
     if cmds.is_empty() {
@@ -406,6 +415,110 @@ pub fn stop_exposer(name: &str) {
     crate::docker::force_rm(name);
 }
 
+pub fn via_host_sidecar_name(pname: &str) -> String {
+    format!("sbx-via-host-{pname}")
+}
+
+pub fn via_host_sidecar_exists(name: &str) -> bool {
+    crate::docker::container_exists(name, true)
+}
+
+pub fn via_host_sidecar_running(name: &str) -> bool {
+    crate::docker::container_exists(name, false)
+}
+
+/// Builds the socat script for the via-host sidecar.
+/// Each ViaHost tunnel becomes a socat listening on bridge_ip:left
+/// (so only docker-bridge clients can reach it, not LAN-side machines)
+/// and forwarding to the remote `host:port` over the host's normal routing.
+fn via_host_script(tunnels: &[Tunnel], bridge_ip: &str) -> Option<String> {
+    let mut cmds: Vec<String> = Vec::new();
+    for t in tunnels {
+        if !matches!(t.direction, Direction::ViaHost) {
+            continue;
+        }
+        cmds.push(format!(
+            "socat -d TCP-LISTEN:{l},fork,reuseaddr,bind={ip} TCP:{r}",
+            l = t.left,
+            ip = bridge_ip,
+            r = t.right,
+        ));
+    }
+    if cmds.is_empty() {
+        return None;
+    }
+    let mut script = String::new();
+    for c in &cmds {
+        script.push_str(c);
+        script.push_str(" &\n");
+    }
+    script.push_str("wait\n");
+    Some(script)
+}
+
+/// Start the via-host sidecar: a socat container on `--network host` that
+/// forwards bridge_ip:left -> remote on each ViaHost entry. The sandbox
+/// reaches these listeners via `host.docker.internal:left`, which bypasses
+/// the VPN sidecar (gluetun's FIREWALL_OUTBOUND_SUBNETS already allows the
+/// bridge subnet — see src/vpn.rs).
+pub fn start_via_host_sidecar(project_root: &Path, tunnels: &[Tunnel]) -> Option<String> {
+    if !has_via_host_tunnels(tunnels) {
+        return None;
+    }
+    let bridge_ip = crate::docker::bridge_gateway();
+    let script = via_host_script(tunnels, &bridge_ip)?;
+
+    let pname = project_name(project_root);
+    let sidecar = via_host_sidecar_name(&pname);
+
+    if via_host_sidecar_running(&sidecar) {
+        crate::docker::force_rm(&sidecar);
+    }
+    if via_host_sidecar_exists(&sidecar) {
+        crate::docker::force_rm(&sidecar);
+    }
+
+    log(format!("starting via-host sidecar: {sidecar}"));
+    log(format!("  bound to bridge ip: {bridge_ip}"));
+    for t in tunnels {
+        if matches!(t.direction, Direction::ViaHost) {
+            log(format!("  via-host {} = {}", t.left, t.right));
+        }
+    }
+
+    let mut cmd = Command::new("docker");
+    cmd.args(["run", "-d", "--name", &sidecar]);
+    cmd.args(["--network", "host"]);
+    cmd.args(["--cap-drop=ALL", "--security-opt=no-new-privileges"]);
+    cmd.args(["--entrypoint", "sh"]);
+    cmd.arg(IMAGE);
+    cmd.args(["-c", &script]);
+
+    let out = cmd.stdout(Stdio::null()).stderr(Stdio::piped()).output();
+    match out {
+        Ok(o) if o.status.success() => Some(sidecar),
+        Ok(o) => {
+            for line in String::from_utf8_lossy(&o.stderr).lines() {
+                log(format!("  docker: {line}"));
+            }
+            log("failed to start via-host sidecar");
+            None
+        }
+        Err(e) => {
+            log(format!("failed to spawn docker: {e}"));
+            None
+        }
+    }
+}
+
+pub fn stop_via_host_sidecar(name: &str) {
+    if name.is_empty() || !via_host_sidecar_exists(name) {
+        return;
+    }
+    log(format!("stopping via-host sidecar: {name}"));
+    crate::docker::force_rm(name);
+}
+
 fn container_bridge_ip(name: &str) -> Option<String> {
     // Try the legacy top-level field first.
     if let Ok(out) = Command::new("docker")
@@ -475,7 +588,8 @@ mod tests {
         let t = parse(
             "out: 3000 = 3000\n\
              in: 5432 = 5432\n\
-             via: 5432 = staging.tail-net.ts.net:5432\n",
+             via: 5432 = staging.tail-net.ts.net:5432\n\
+             via-host: 27017 = 192.168.1.67:27017\n",
         );
         assert_eq!(
             t,
@@ -495,8 +609,94 @@ mod tests {
                     left: 5432,
                     right: "staging.tail-net.ts.net:5432".into(),
                 },
+                Tunnel {
+                    direction: Direction::ViaHost,
+                    left: 27017,
+                    right: "192.168.1.67:27017".into(),
+                },
             ]
         );
+    }
+
+    #[test]
+    fn parse_via_host_requires_host_colon_port() {
+        // bare port on rhs is rejected
+        let t = parse("via-host: 27017 = 27017\n");
+        assert!(t.is_empty(), "should reject rhs without ':' for via-host");
+        // host without port is rejected
+        let t = parse("via-host: 27017 = 192.168.1.67:nope\n");
+        assert!(t.is_empty(), "should reject non-numeric port for via-host");
+    }
+
+    #[test]
+    fn via_host_script_binds_to_bridge_ip() {
+        let tunnels = vec![
+            Tunnel {
+                direction: Direction::ViaHost,
+                left: 27017,
+                right: "192.168.1.67:27017".into(),
+            },
+            Tunnel {
+                direction: Direction::Out,
+                left: 3000,
+                right: "3000".into(),
+            },
+        ];
+        let s = via_host_script(&tunnels, "172.17.0.1").expect("script");
+        assert!(s.contains(
+            "TCP-LISTEN:27017,fork,reuseaddr,bind=172.17.0.1 TCP:192.168.1.67:27017"
+        ));
+        // out: entries don't belong in this sidecar
+        assert!(!s.contains("3000"));
+        assert!(s.trim_end().ends_with("wait"));
+    }
+
+    #[test]
+    fn via_host_script_none_without_via_host_entries() {
+        let tunnels = vec![Tunnel {
+            direction: Direction::Via,
+            left: 5432,
+            right: "db.ts.net:5432".into(),
+        }];
+        assert!(via_host_script(&tunnels, "172.17.0.1").is_none());
+    }
+
+    #[test]
+    fn has_via_host_tunnels_only_matches_via_host() {
+        let none = vec![Tunnel {
+            direction: Direction::Via,
+            left: 1,
+            right: "h:1".into(),
+        }];
+        assert!(!has_via_host_tunnels(&none));
+        let some = vec![Tunnel {
+            direction: Direction::ViaHost,
+            left: 27017,
+            right: "192.168.1.67:27017".into(),
+        }];
+        assert!(has_via_host_tunnels(&some));
+    }
+
+    #[test]
+    fn publish_args_skips_via_host() {
+        let tunnels = vec![Tunnel {
+            direction: Direction::ViaHost,
+            left: 27017,
+            right: "192.168.1.67:27017".into(),
+        }];
+        // via-host doesn't need any host-side -p; it binds itself on host net.
+        assert!(publish_args(&tunnels).is_empty());
+    }
+
+    #[test]
+    fn socat_script_skips_via_host() {
+        let tunnels = vec![Tunnel {
+            direction: Direction::ViaHost,
+            left: 27017,
+            right: "192.168.1.67:27017".into(),
+        }];
+        // via-host runs in its own sidecar, not the in-netns one.
+        assert!(socat_script(&tunnels).is_none());
     }
 
     #[test]

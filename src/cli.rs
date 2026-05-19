@@ -122,7 +122,7 @@ fn complete_configured_tunnel_key(current: &OsStr) -> Vec<CompletionCandidate> {
 
 fn complete_tunnel_direction(current: &OsStr) -> Vec<CompletionCandidate> {
     let cur = current.to_str().unwrap_or("");
-    ["out", "in", "via"]
+    ["out", "in", "via", "via-host"]
         .iter()
         .filter(|d| cur.is_empty() || fuzzy(cur, d))
         .map(|d| CompletionCandidate::new(*d))

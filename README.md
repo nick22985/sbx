@@ -233,14 +233,15 @@ each maps to its own `SBX_TAILSCALE_AUTHKEY[_<NAME>]` env var.
 ### Tunnels
 
 `sbx config tunnel` forwards raw TCP between the host, the sandbox, and remote
-services reachable via Tailscale/VPN. Three directions, written as
+services reachable via Tailscale/VPN. Four directions, written as
 `DIR: LEFT = RIGHT` lines in `.sbx/tunnels`:
 
 ```
-out: 3000 = 3000                        # sandbox :3000  -> host 127.0.0.1:3000
-out: 8080 = 80                          # sandbox :80    -> host 127.0.0.1:8080
-in:  5432 = 5432                        # host :5432     -> sandbox localhost:5432
-via: 5432 = db.staging.tail-net.ts.net:5432   # host :5432 -> remote :5432 through the sandbox netns
+out:      3000  = 3000                        # sandbox :3000  -> host 127.0.0.1:3000
+out:      8080  = 80                          # sandbox :80    -> host 127.0.0.1:8080
+in:       5432  = 5432                        # host :5432     -> sandbox localhost:5432
+via:      5432  = db.staging.tail-net.ts.net:5432   # host :5432 -> remote :5432 through the sandbox netns
+via-host: 27017 = 192.168.1.67:27017          # sandbox -> host.docker.internal:27017 -> remote (uses host's netns)
 ```
 
 `via:` is most useful with Tailscale/VPN on: the sandbox netns has tailnet routes
@@ -249,8 +250,19 @@ without running Tailscale themselves. `in:` and `via:` spin up a small `alpine/s
 sidecar joined to the session's netns; `out:` is published via `-p` on the netns
 owner.
 
+`via-host:` is the inverse: the *sandbox* needs to reach a destination the **host**
+can route to but the sandbox's own netns can't — most commonly a LAN/RFC1918
+service when VPN is on (which has stolen the sandbox's default route). A separate
+`sbx-via-host-<project>` sidecar runs on `--network host` (so it has the host's
+full LAN/VPN routing) and listens on the docker bridge gateway at `LEFT`, forwarding
+to `RIGHT`. The sandbox connects to `host.docker.internal:LEFT`; this traffic
+exits the VPN netns via the bridge interface because gluetun's
+`FIREWALL_OUTBOUND_SUBNETS` already exempts the docker bridge subnet. The listener
+binds to the bridge IP specifically, so LAN-side machines can't reach the forward.
+
 `sbx tunnel status` shows the configured tunnels and the state of the per-project
-socat sidecar; `sbx tunnel logs [-f]` tails it; `sbx tunnel stop` tears it down.
+socat sidecars; `sbx tunnel logs [-f]` tails them; `sbx tunnel stop` tears them
+down.
 
 ### Host proxy (HTTPS pass-through via host)
 

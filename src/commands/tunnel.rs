@@ -41,6 +41,7 @@ fn status(project_root: &Path, flavor: &str) {
     let pname = project_name(project_root);
     let sidecar = tunnel::sidecar_name(&pname);
     let exposer = tunnel::exposer_name(&pname);
+    let via_host = tunnel::via_host_sidecar_name(&pname);
     let tunnels = tunnel::read_tunnels(project_root);
 
     let main = docker::find_running_container(flavor, &pname);
@@ -60,6 +61,10 @@ fn status(project_root: &Path, flavor: &str) {
     }
     if tunnel::exposer_exists(&exposer) {
         println!("exposer:  {}", crate::docker::state_line(&exposer));
+    }
+    let needs_via_host = tunnel::has_via_host_tunnels(&tunnels);
+    if needs_via_host || tunnel::via_host_sidecar_exists(&via_host) {
+        println!("via-host: {}", crate::docker::state_line(&via_host));
     }
 
     if tunnels.is_empty() {
@@ -81,6 +86,11 @@ fn status(project_root: &Path, flavor: &str) {
     } else {
         HashSet::new()
     };
+    let via_host_listening: HashSet<u16> = if tunnel::via_host_sidecar_running(&via_host) {
+        via_host_listening_ports(&via_host)
+    } else {
+        HashSet::new()
+    };
 
     println!("tunnels:");
     let dir_w = tunnels
@@ -99,11 +109,20 @@ fn status(project_root: &Path, flavor: &str) {
             Direction::Out => format!("sbx:{} -> host 127.0.0.1:{}", t.left, t.right),
             Direction::In => format!("host:{} -> sbx :{}", t.right, t.left),
             Direction::Via => format!("host 127.0.0.1:{} -> {}", t.left, t.right),
+            Direction::ViaHost => {
+                format!("sbx -> host.docker.internal:{} -> {}", t.left, t.right)
+            }
         })
         .collect();
     let arrow_w = arrows.iter().map(|a| a.len()).max().unwrap_or(0);
     for (t, arrow) in tunnels.iter().zip(arrows.iter()) {
-        let state = tunnel_state(t, main.is_some(), &published, &sidecar_listening);
+        let state = tunnel_state(
+            t,
+            main.is_some(),
+            &published,
+            &sidecar_listening,
+            &via_host_listening,
+        );
         println!(
             "  {:<dw$}  {:<lw$}  {:<aw$}  [{state}]",
             t.direction.as_str(),
@@ -121,6 +140,7 @@ fn tunnel_state(
     session_running: bool,
     published: &HashSet<u16>,
     sidecar_listening: &HashSet<u16>,
+    via_host_listening: &HashSet<u16>,
 ) -> &'static str {
     if !session_running {
         return "down";
@@ -148,6 +168,13 @@ fn tunnel_state(
                 (true, true) => "active",
                 (false, false) => "down",
                 _ => "partial",
+            }
+        }
+        Direction::ViaHost => {
+            if via_host_listening.contains(&t.left) {
+                "active"
+            } else {
+                "down"
             }
         }
     }
@@ -193,6 +220,60 @@ fn published_host_ports(container: &str) -> HashSet<u16> {
         .collect()
 }
 
+fn via_host_listening_ports(container: &str) -> HashSet<u16> {
+    let Ok(out) = Command::new("docker")
+        .args(["exec", container, "cat", "/proc/net/tcp"])
+        .output()
+    else {
+        return HashSet::new();
+    };
+    if !out.status.success() {
+        return HashSet::new();
+    }
+    let bridge_ip = crate::docker::bridge_gateway();
+    let bridge_hex = ip_to_hex(&bridge_ip);
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let mut it = line.split_whitespace();
+            let _sl = it.next()?;
+            let local = it.next()?;
+            let _rem = it.next()?;
+            let st = it.next()?;
+            if st != "0A" {
+                return None;
+            }
+            let mut parts = local.split(':');
+            let ip_hex = parts.next()?;
+            let port_hex = parts.next()?;
+            // socat is host-net and bind=<bridge_gw>; only count ports bound to that IP.
+            if let Some(expected) = bridge_hex.as_deref()
+                && !ip_hex.eq_ignore_ascii_case(expected)
+            {
+                return None;
+            }
+            u16::from_str_radix(port_hex, 16).ok()
+        })
+        .collect()
+}
+
+fn ip_to_hex(ip: &str) -> Option<String> {
+    let mut octets = [0u8; 4];
+    for (i, part) in ip.split('.').enumerate() {
+        if i >= 4 {
+            return None;
+        }
+        octets[i] = part.parse().ok()?;
+    }
+    // /proc/net/tcp stores the IP as little-endian hex of the 4 octets,
+    // i.e. octets reversed and hex-formatted upper-case.
+    Some(format!(
+        "{:02X}{:02X}{:02X}{:02X}",
+        octets[3], octets[2], octets[1], octets[0]
+    ))
+}
+
 fn listening_ports(container: &str) -> HashSet<u16> {
     let Ok(out) = Command::new("docker")
         .args(["exec", container, "cat", "/proc/net/tcp"])
@@ -224,21 +305,37 @@ fn listening_ports(container: &str) -> HashSet<u16> {
 fn logs(project_root: &Path, follow: bool) {
     let pname = project_name(project_root);
     let sidecar = tunnel::sidecar_name(&pname);
-    if !tunnel::sidecar_exists(&sidecar) {
-        log(format!("tunnel sidecar not present ({sidecar})"));
+    let via_host = tunnel::via_host_sidecar_name(&pname);
+    let in_netns_present = tunnel::sidecar_exists(&sidecar);
+    let via_host_present = tunnel::via_host_sidecar_exists(&via_host);
+    if !in_netns_present && !via_host_present {
+        log(format!("no tunnel sidecars present for {pname}"));
         return;
     }
-    crate::docker::tail_logs(&sidecar, follow);
+    if in_netns_present {
+        crate::docker::tail_logs(&sidecar, follow);
+    }
+    if via_host_present {
+        crate::docker::tail_logs(&via_host, follow);
+    }
 }
 
 fn stop(project_root: &Path) {
     let pname = project_name(project_root);
     let sidecar = tunnel::sidecar_name(&pname);
-    if !tunnel::sidecar_exists(&sidecar) {
-        log(format!("tunnel sidecar not present ({sidecar})"));
+    let via_host = tunnel::via_host_sidecar_name(&pname);
+    let in_netns_present = tunnel::sidecar_exists(&sidecar);
+    let via_host_present = tunnel::via_host_sidecar_exists(&via_host);
+    if !in_netns_present && !via_host_present {
+        log(format!("no tunnel sidecars present for {pname}"));
         return;
     }
-    tunnel::stop_sidecar(&sidecar);
+    if in_netns_present {
+        tunnel::stop_sidecar(&sidecar);
+    }
+    if via_host_present {
+        tunnel::stop_via_host_sidecar(&via_host);
+    }
 }
 
 pub fn run(cwd: &Path, action: Action<'_>) {
@@ -268,7 +365,7 @@ pub fn run(cwd: &Path, action: Action<'_>) {
         } => {
             let Some(dir) = Direction::parse(direction) else {
                 die(format!(
-                    "invalid direction: {direction} (use out, in, or via)"
+                    "invalid direction: {direction} (use out, in, via, or via-host)"
                 ));
             };
             let Ok(left_port) = left.parse::<u16>() else {
@@ -280,12 +377,18 @@ pub fn run(cwd: &Path, action: Action<'_>) {
                         die(format!("invalid right-side port: {right}"));
                     }
                 }
-                Direction::Via => {
+                Direction::Via | Direction::ViaHost => {
                     let Some((host, port)) = right.rsplit_once(':') else {
-                        die(format!("via right side must be host:port, got: {right}"));
+                        die(format!(
+                            "{} right side must be host:port, got: {right}",
+                            dir.as_str()
+                        ));
                     };
                     if host.is_empty() || port.parse::<u16>().is_err() {
-                        die(format!("via right side must be host:port, got: {right}"));
+                        die(format!(
+                            "{} right side must be host:port, got: {right}",
+                            dir.as_str()
+                        ));
                     }
                 }
             }
@@ -322,7 +425,7 @@ pub fn run(cwd: &Path, action: Action<'_>) {
         Action::Remove { direction, left } => {
             let Some(dir) = Direction::parse(direction) else {
                 die(format!(
-                    "invalid direction: {direction} (use out, in, or via)"
+                    "invalid direction: {direction} (use out, in, via, or via-host)"
                 ));
             };
             let Ok(left_port) = left.parse::<u16>() else {

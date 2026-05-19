@@ -222,11 +222,7 @@ fn current_branch(root: &Path) -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 pub fn project_flavor(start: &Path) -> Option<(String, PathBuf)> {

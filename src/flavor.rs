@@ -630,10 +630,8 @@ mod tests {
 
     #[test]
     fn volume_relative_container_path_resolves_under_container_home() {
-        let entries = parse_cache_lines(
-            &["@sbx-claude-local:.local"],
-            &PathBuf::from("/home/nick"),
-        );
+        let entries =
+            parse_cache_lines(&["@sbx-claude-local:.local"], &PathBuf::from("/home/nick"));
         assert_eq!(
             entries,
             vec![CacheEntry::Volume {
@@ -745,7 +743,10 @@ mod tests {
         let _g = set_test_paths(cfg, home);
         // No flavor / global / project config written, so caches are empty.
         let args = cache_args("rust", None, &PathBuf::from("/home/nick"));
-        assert!(args.is_empty(), "expected no hardcoded mounts, got {args:?}");
+        assert!(
+            args.is_empty(),
+            "expected no hardcoded mounts, got {args:?}"
+        );
     }
 
     #[test]
@@ -785,7 +786,10 @@ mod tests {
             !args.iter().any(|a| a.starts_with("sbx-claude-local")),
             "claude flavor should not get an implicit sbx-claude-local mount: {args:?}"
         );
-        assert!(args.is_empty(), "expected no hardcoded mounts, got {args:?}");
+        assert!(
+            args.is_empty(),
+            "expected no hardcoded mounts, got {args:?}"
+        );
     }
 
     #[test]

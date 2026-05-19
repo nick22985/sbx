@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::config::{Config, CONFIG_FILENAME};
+use crate::config::{CONFIG_FILENAME, Config};
 use crate::docker;
 use crate::flavor::{build_image, image_name, is_flavor, is_internal_flavor, list_flavors};
 use crate::project::{private_write_dir, sbx_write_dir};

@@ -86,6 +86,14 @@ pub fn load_into_env() {
     }
 }
 
+pub fn forwarded_keys() -> Vec<String> {
+    let path = env_file_path();
+    if !path.exists() {
+        return Vec::new();
+    }
+    parse_env_file(&path).into_iter().map(|e| e.key).collect()
+}
+
 pub fn ensure_file() -> io::Result<()> {
     let path = env_file_path();
     if let Some(parent) = path.parent() {

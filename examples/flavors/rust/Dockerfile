@@ -18,6 +18,8 @@ RUN --mount=type=cache,target=/tmp/sbx-dl,sharing=locked,uid=1000,gid=1000 set -
     fi; \
     CARGO_HOME=/home/dev/.cargo RUSTUP_HOME=/home/dev/.rustup \
         bash /tmp/sbx-dl/rustup-init.sh -y --no-modify-path --default-toolchain stable --profile minimal; \
+    CARGO_HOME=/home/dev/.cargo RUSTUP_HOME=/home/dev/.rustup \
+        /home/dev/.cargo/bin/rustup component add rustfmt; \
     /home/dev/.cargo/bin/rustc --version
 
 # cargo-audit — invoke via `cargo audit` for Cargo.lock vulnerability checks.

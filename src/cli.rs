@@ -323,8 +323,8 @@ pub enum Cmd {
         profile: Option<String>,
         #[arg(short = 's', long = "safe")]
         safe: bool,
-        #[arg(long = "no-rc")]
-        no_rc: bool,
+        #[arg(long = "rc")]
+        rc: bool,
         #[arg(long = "docker")]
         docker: bool,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]

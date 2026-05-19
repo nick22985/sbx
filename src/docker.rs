@@ -667,6 +667,14 @@ pub fn run_container(spec: RunSpec<'_>) -> i32 {
             cmd.args(["-e", &format!("{v}={val}")]);
         }
     }
+    for k in crate::env_file::forwarded_keys() {
+        if FORWARDED_VARS.contains(&k.as_str()) {
+            continue;
+        }
+        if let Ok(val) = std::env::var(&k) {
+            cmd.args(["-e", &format!("{k}={val}")]);
+        }
+    }
     let workspace = spec.project_root.display().to_string();
     cmd.args(["-w", &workspace]);
     cmd.arg("-v").arg(format!("{workspace}:{workspace}"));
@@ -774,6 +782,14 @@ pub fn exec_into(container: &str, project_root: &Path, entry: &[String]) -> io::
             && !val.is_empty()
         {
             cmd.args(["-e", &format!("{v}={val}")]);
+        }
+    }
+    for k in crate::env_file::forwarded_keys() {
+        if FORWARDED_VARS.contains(&k.as_str()) {
+            continue;
+        }
+        if let Ok(val) = std::env::var(&k) {
+            cmd.args(["-e", &format!("{k}={val}")]);
         }
     }
     cmd.args(["-w", &project_root.display().to_string()]);

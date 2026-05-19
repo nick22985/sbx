@@ -125,7 +125,7 @@ fn main() {
             mounts,
             profile,
             safe,
-            no_rc,
+            rc,
             docker,
             args,
         }) => match action {
@@ -136,9 +136,10 @@ fn main() {
                 mounts,
                 profile,
                 safe,
-                no_rc,
+                rc,
                 docker,
             )),
+
             Some(ClaudeCmd::Build) => commands::claude::build(false),
             Some(ClaudeCmd::Rebuild) => commands::claude::build(true),
             Some(ClaudeCmd::Profile { action }) => match action.unwrap_or(ProfileCmd::List) {
@@ -156,7 +157,7 @@ fn main() {
                 mounts,
                 profile,
                 safe,
-                no_rc,
+                rc,
                 docker,
             )),
         },

@@ -15,20 +15,20 @@ pub fn run(
     cli_mounts: Vec<String>,
     cli_profile: Option<String>,
     safe: bool,
-    no_rc: bool,
+    rc: bool,
     cli_docker: bool,
 ) -> i32 {
     let mut cli_mounts = cli_mounts;
     let mut cli_profile = cli_profile;
     let mut safe = safe;
-    let mut no_rc = no_rc;
+    let mut rc = rc;
     let mut cli_docker = cli_docker;
     let args = extract_sbx_flags(
         args,
         &mut cli_mounts,
         &mut cli_profile,
         &mut safe,
-        &mut no_rc,
+        &mut rc,
         &mut cli_docker,
     );
 
@@ -43,12 +43,12 @@ pub fn run(
         if !safe && !already {
             v.push("--dangerously-skip-permissions".into());
         }
-        let rc_off = no_rc
+        let rc_on = rc
             || std::env::var("SBX_REMOTE_CONTROL")
-                .map(|v| v == "0")
+                .map(|v| v == "1")
                 .unwrap_or(false);
         let rc_already = args.iter().any(|a| a == "--remote-control" || a == "--rc");
-        if !rc_off && !rc_already {
+        if rc_on && !rc_already {
             let name = format!("{}-{}", project_name(cwd), std::process::id());
             v.push("--remote-control".into());
             v.push(name);
@@ -238,7 +238,7 @@ fn extract_sbx_flags(
     mounts: &mut Vec<String>,
     profile: &mut Option<String>,
     safe: &mut bool,
-    no_rc: &mut bool,
+    rc: &mut bool,
     docker: &mut bool,
 ) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
@@ -247,7 +247,7 @@ fn extract_sbx_flags(
         match a.as_str() {
             "--docker" => *docker = true,
             "--safe" | "-s" => *safe = true,
-            "--no-rc" => *no_rc = true,
+            "--rc" => *rc = true,
             "--profile" | "-p" => match iter.next() {
                 Some(v) => *profile = Some(v),
                 None => die("--profile requires a value"),

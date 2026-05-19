@@ -6,7 +6,7 @@ into a container with your repo bind-mounted at the same path it lives at
 on the host. Single Rust binary; dynamic shell completions via
 `clap_complete`.
 
-<img alt="sbx demo: cd into a project, sbx init bun, sbx config port add 3000, sbx run, dev server up — one command to a working sandbox." src="docs/images/hero.gif">
+<img alt="sbx demo: cd into a project, sbx init bun, sbx config port add 3000, sbx run, dev server up. One command to a working sandbox." src="docs/images/hero.gif">
 
 ## Why
 
@@ -117,14 +117,15 @@ alias rustc='sbx shell -f rust rustc'
 ```
 
 Now `npm install` in any directory runs `npm install` inside the `npm`
-flavor's container with cwd bind-mounted at the same path — no host
+flavor's container with cwd bind-mounted at the same path. No host
 `node_modules` postinstall scripts, no host `cargo build.rs` running with
 your credentials. If the project has its own `.sbx/flavor`, drop the
 `-f` and the project's flavor is used automatically (`sbx shell npm install`).
 
 Flavor name vs. binary: the `-f` arg picks the **image**, the rest is
-the **command**. Useful when they differ — e.g. `sbx shell -f rust cargo
-build` (the `rust` flavor ships `cargo`, not `rust`).
+the **command**. Useful when they differ, e.g. `sbx shell -f rust cargo
+build` (the `rust` flavor ships `cargo`, not `rust`). `--flavor` and
+`--flavour` (British spelling) are both accepted as long forms of `-f`.
 
 ## Images
 
@@ -143,12 +144,13 @@ All per-project state lives under `sbx config` (aliases: `cfg`, `conf`).
 ```
 sbx config port     [list|add N|rm N]
 sbx config hostname [list|add HOST PORT|rm HOST]   Map HOST.sbx.localhost via the proxy sidecar
-sbx config tunnel   [list|add DIR L R|rm DIR L]    Forward TCP between host, sandbox, and remote (DIR: out/in/via)
+sbx config tunnel   [list|add DIR L R|rm DIR L]    Forward TCP between host, sandbox, and remote (DIR: out/in/via/via-host)
 sbx config env      [list|set K=V|unset K]         Manages ~/.config/sbx/env
 sbx config start    [show|set <cmd>|clear]
 sbx config service  [list|add NAME|rm NAME]        Built-ins: redis, postgres, mongo, mysql, mailpit
 sbx config ssh      [on|off|status]                Mount $SSH_AUTH_SOCK on next start
 sbx config docker   [on|off|status]                Forward /var/run/docker.sock into the sandbox
+sbx config gui      [on|off|status]                Forward host X11 / Wayland sockets so GUI apps can render on the host
 ```
 
 ### Mounts
@@ -187,6 +189,24 @@ top* of the volume:
 The container still gets the cache volume at `~/.m2/`, but Maven now
 picks up your host `settings.xml` (auth, mirrors, etc.).
 
+### GUI forwarding (opt-in)
+
+`sbx config gui on` touches `./.sbx/gui`; the next container start mounts
+the host's Wayland and X11 sockets and forwards `DISPLAY`,
+`WAYLAND_DISPLAY`, and `XDG_RUNTIME_DIR` so GUI apps inside the sandbox
+render on the host (Electron apps, browsers, IDEs launched from a flavor
+shell, etc.).
+
+```sh
+sbx config gui on        # touches ./.sbx/gui
+sbx config gui status    # shows whether forwarding is on + detected host sockets
+sbx config gui off       # removes the marker
+```
+
+`sbx config gui status` prints whether forwarding is enabled and which
+of `WAYLAND_DISPLAY` / `DISPLAY` were detected on the host, useful when
+an app silently fails to open a window.
+
 ## Networking
 
 <picture>
@@ -223,7 +243,7 @@ them in one project, e.g. `app.sbx.localhost` for fast local dev and
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/exposure-dark.svg">
-  <img alt="How a request reaches the sandbox, by scope: (1) HTTP — browser to 127.0.0.1:80, Traefik routes to sandbox; (2) HTTPS — browser to 127.0.0.1:443, Traefik terminates TLS (mkcert or Let's Encrypt) and forwards plain HTTP to sandbox; (3) Public — browser to Cloudflare edge, cloudflared sidecar dials out over QUIC, then HTTP through Traefik to sandbox." src="docs/images/exposure-light.svg">
+  <img alt="How a request reaches the sandbox, by scope: (1) HTTP: browser to 127.0.0.1:80, Traefik routes to sandbox; (2) HTTPS: browser to 127.0.0.1:443, Traefik terminates TLS (mkcert or Let's Encrypt) and forwards plain HTTP to sandbox; (3) Public: browser to Cloudflare edge, cloudflared sidecar dials out over QUIC, then HTTP through Traefik to sandbox." src="docs/images/exposure-light.svg">
 </picture>
 
 VPN/Tailscale settings are stored per-project in `.sbx/network` and applied
@@ -251,7 +271,7 @@ sidecar joined to the session's netns; `out:` is published via `-p` on the netns
 owner.
 
 `via-host:` is the inverse: the *sandbox* needs to reach a destination the **host**
-can route to but the sandbox's own netns can't — most commonly a LAN/RFC1918
+can route to but the sandbox's own netns can't, most commonly a LAN/RFC1918
 service when VPN is on (which has stolen the sandbox's default route). A separate
 `sbx-via-host-<project>` sidecar runs on `--network host` (so it has the host's
 full LAN/VPN routing) and listens on the docker bridge gateway at `LEFT`, forwarding
@@ -353,13 +373,13 @@ account.
 some extra knobs:
 
 ```
-sbx claude [-m PATH]... [-p PROFILE] [-s] [--no-rc] [--docker] [args...]
+sbx claude [-m PATH]... [-p PROFILE] [-s] [--rc] [--docker] [args...]
 sbx claude shell                  Drop to bash inside the sandbox
 sbx claude build|rebuild          Build/rebuild the claude image
 sbx claude profile [list|add NAME|rm NAME|current]
 ```
 
-Flags (`-m`, `-p`, `-s`, `--no-rc`, `--docker`) come *before* the
+Flags (`-m`, `-p`, `-s`, `--rc`, `--docker`) come *before* the
 subcommand: `sbx claude -m ~/projects/foo -p work shell`.
 
 `sbx claude` is independent of the project's flavor, you can launch it
@@ -377,12 +397,13 @@ In addition to the global / per-project [mount files](#mounts),
 `sbx claude` accepts `-m / --mount <SPEC>` repeated per invocation for
 ad-hoc mounts: `sbx claude -m ~/projects/foo -m ~/.m2/settings.xml:~/.m2/settings.xml:ro`.
 
-By default `sbx claude` opts each session into [Remote Control] so it's
-reachable from `claude.ai/code` and the Claude mobile app, sbx appends
-`--remote-control "<project>-<pid>"` to the inner `claude` invocation.
-Opt out with `--no-rc` for a single run, `SBX_REMOTE_CONTROL=0` to
-disable persistently, or by passing your own `--remote-control` / `--rc`
-flag (sbx won't double up).
+`sbx claude` can opt a session into [Remote Control] so it's reachable
+from `claude.ai/code` and the Claude mobile app. When enabled, sbx
+appends `--remote-control "<project>-<pid>"` to the inner `claude`
+invocation. It's **off by default**, opt in with `--rc` for a single
+run, set `SBX_REMOTE_CONTROL=1` in `~/.config/sbx/env` to default-enable
+it persistently, or pass your own `--remote-control` / `--rc` flag (sbx
+won't double up).
 
 [Remote Control]: https://code.claude.com/docs/en/remote-control
 
@@ -425,10 +446,12 @@ escape the sandbox. Only enable this when you trust what's running inside.
 - `./.sbx/services`                           - sidecar service per line
 - `./.sbx/ssh`                                - touched file → mount $SSH_AUTH_SOCK + ~/.ssh/config + ~/.ssh/known_hosts (ro)
 - `./.sbx/docker`                             - touched file → mount /var/run/docker.sock
+- `./.sbx/gui`                                - touched file → forward host X11 / Wayland sockets for GUI apps
 - `./.sbx/host-proxy`                         - marker + optional allowlist (one host per line) for the host tinyproxy sidecar
 - `./.sbx/mounts`                             - extra host paths, one mount per line (`host[:container[:ro]]`)
 - `./.sbx/claude-profile`                     - pins this project to a named claude profile
-- `./.sbx/name`                                - overrides the auto worktree suffix (see below)
+- `./.sbx/name`                               - overrides the auto worktree suffix (see below)
+- `./.sbx/port-offset`                        - override the auto-derived per-worktree port offset (single integer)
 
 See [`examples/sbx/`](examples/sbx/) for an annotated example of every `.sbx/` file.
 
@@ -452,6 +475,10 @@ across worktrees:
   `server-live`. The prefix is flat (dash, not dot) so the URL stays at the
   same DNS depth as the original, existing wildcard certs
   (`*.sbx.localhost`, `*.example.com`) keep working.
+- Published ports get a stable hash-derived offset in `[1, 9]` so two
+  worktrees of the same repo don't collide on the host (`master` / `main`
+  / non-worktree always use 0). Pin a specific offset by writing a single
+  integer to `.sbx/port-offset`.
 
 The branch name is sanitized (`feature/foo` → `feature-foo`). To use
 something other than the branch name, drop a `.sbx/name` file in the
@@ -477,11 +504,20 @@ worktree, its contents replace the suffix (so `.sbx/name = exp1` →
 | `SBX_HOSTNAME` / `SBX_HOSTNAMES` | Set inside sandboxes, primary / all hostnames (public preferred over local, useful for OAuth/SAML callbacks) |
 | `SBX_LOCAL_HOSTNAME` / `SBX_LOCAL_HOSTNAMES` | Set inside sandboxes, first / all local hostnames from `.sbx/hostname` (already prefixed) |
 | `SBX_PUBLIC_HOSTNAME` / `SBX_PUBLIC_HOSTNAMES` | Set inside sandboxes, first / all public hostnames from `.sbx/public` |
+| `SBX_PORT` | Set inside sandboxes, primary published port (first entry in `.sbx/ports`) |
 | `SBX_DOCKER=1` | Default `sbx claude` to mount the host docker socket |
-| `SBX_REMOTE_CONTROL=0` | Disable `sbx claude` auto-`--remote-control` |
+| `SBX_REMOTE_CONTROL=1` | Default `sbx claude` to enable `--remote-control` (off by default) |
 | `SBX_TAILSCALE_AUTHKEY[_<NAME>]=…` | Auth key for the default / named tailscale profile |
 | `SBX_TAILSCALE_EXTRA_ARGS=…` | Extra args appended to `tailscale up` |
 | `SBX_BUILDX_BUILDER=default` | Buildx builder to use for sbx's own builds (default: `default`; set empty to inherit `docker buildx use`) |
 
 Persist these in `~/.config/sbx/env` (KEY=value lines, chmod 600). Host env
 wins over the file.
+
+**Anything you put in `~/.config/sbx/env` is also forwarded into every sbx
+container.** So `sbx config env set MY_API_KEY=…` (or editing the file
+directly) is enough to make `MY_API_KEY` available to your app inside the
+sandbox, no allowlist or prefix required. The sbx-internal vars above
+(`CLOUDFLARE_DNS_API_TOKEN`, `SBX_TAILSCALE_AUTHKEY*`, etc.) are
+forwarded too, treat the file as the single source of truth for "env I
+want in my sandboxes" and keep host-only secrets out of it.

@@ -201,6 +201,7 @@ mod tests {
             mounts: vec!["~/flavor-only".into()],
             caches: vec![],
             start: None,
+            allow_bare_repo: false,
         }
         .save("npm")
         .unwrap();
@@ -244,6 +245,7 @@ mod tests {
             mounts: vec!["~/shared:/flavor-target".into()],
             caches: vec![],
             start: None,
+            allow_bare_repo: false,
         }
         .save("npm")
         .unwrap();
@@ -313,6 +315,7 @@ mod tests {
             mounts: vec!["~/flav-only".into()],
             caches: vec![],
             start: None,
+            allow_bare_repo: false,
         }
         .save("nvim")
         .unwrap();

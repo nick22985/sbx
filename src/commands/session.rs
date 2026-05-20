@@ -5,10 +5,13 @@ use crate::flavor::resolve_image;
 use crate::host_proxy;
 use crate::mounts;
 use crate::network::ProjectNetwork;
-use crate::project::{port_offset, project_base_name, project_name, worktree_suffix};
+use crate::project::{
+    port_offset, project_base_name, project_name, refuse_if_bare, worktree_suffix,
+};
 use crate::proxy;
 use crate::public;
 use crate::service;
+use crate::socks;
 use crate::tailscale;
 use crate::tunnel;
 use crate::util::log;
@@ -21,6 +24,8 @@ pub struct Cleanup {
     tunnel_sidecar: Option<String>,
     tunnel_exposer: Option<String>,
     via_host_sidecar: Option<String>,
+    socks_sidecars: Vec<String>,
+    socks_exposer: Option<String>,
     proxy_attached: bool,
     proxy_route_project: Option<String>,
     public_project_fragment: Option<String>,
@@ -39,6 +44,13 @@ impl Cleanup {
     pub fn run(&mut self) {
         if self.done {
             return;
+        }
+        if let Some(exposer) = self.socks_exposer.take() {
+            socks::stop_exposer(&exposer);
+        }
+        if !self.socks_sidecars.is_empty() {
+            socks::stop_sidecars_if_idle(&self.socks_sidecars);
+            self.socks_sidecars.clear();
         }
         if let Some(exposer) = self.tunnel_exposer.take() {
             tunnel::stop_exposer(&exposer);
@@ -59,8 +71,7 @@ impl Cleanup {
             vpn::stop_sidecar_if_idle(&sidecar);
         }
         if let Some(name) = self.public_project_fragment.take() {
-            public::delete_project_dns_routes(&name);
-            public::remove_project_fragment(&name);
+            public::touch_project_fragment(&name);
             public::apply_config();
         }
         if let Some(name) = self.proxy_route_project.take() {
@@ -92,6 +103,7 @@ impl Drop for Cleanup {
 }
 
 pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32 {
+    refuse_if_bare(project_root, Some(flavor));
     docker::ensure_ssh_agent_ready(project_root);
     let image = resolve_image(flavor, project_root, false);
     let mut cleanup = Cleanup::new();
@@ -124,7 +136,7 @@ pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32
 
     let mut vpn_extra_subnets: Vec<String> = Vec::new();
     let mut vpn_attach_nets: Vec<String> = Vec::new();
-    if !routes.is_empty() {
+    if net.vpn.is_some() {
         proxy::ensure_network();
         if let Some(sn) = proxy::network_subnet() {
             vpn_extra_subnets.push(sn);
@@ -202,6 +214,22 @@ pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32
         && let Some(exposer) = tunnel::start_exposer(&pname, owner, &tunnels)
     {
         cleanup.tunnel_exposer = Some(exposer);
+    }
+
+    let socks_entries = socks::read_socks(project_root);
+    if !socks_entries.is_empty() {
+        let sidecars = socks::start_sidecar(project_root, &socks_entries, netns_owner.as_deref());
+        if !sidecars.is_empty() {
+            let first = sidecars[0].clone();
+            cleanup.socks_sidecars = sidecars;
+            let target = netns_owner.clone().unwrap_or_else(|| first.clone());
+            if let Some(exp) = socks::start_exposer(&pname, &target, &socks_entries) {
+                cleanup.socks_exposer = Some(exp);
+            }
+            if netns_owner.is_none() {
+                netns_owner = Some(first);
+            }
+        }
     }
 
     if let Some(via_host) = tunnel::start_via_host_sidecar(project_root, &tunnels) {

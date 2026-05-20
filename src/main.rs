@@ -127,6 +127,7 @@ fn main() {
             profile,
             safe,
             rc,
+            no_rc,
             docker,
             args,
         }) => match action {
@@ -138,6 +139,7 @@ fn main() {
                 profile,
                 safe,
                 rc,
+                no_rc,
                 docker,
             )),
 
@@ -159,6 +161,7 @@ fn main() {
                 profile,
                 safe,
                 rc,
+                no_rc,
                 docker,
             )),
         },

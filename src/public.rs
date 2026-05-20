@@ -169,6 +169,10 @@ pub fn remove_project_fragment(pname: &str) {
     crate::fragments::remove(&projects_dir(), pname);
 }
 
+pub fn touch_project_fragment(pname: &str) {
+    crate::fragments::touch(&projects_dir(), pname);
+}
+
 pub fn delete_project_dns_routes(pname: &str) {
     if crate::cloudflare::api_token().is_none() {
         return;
@@ -282,9 +286,8 @@ pub fn stop_sidecar_if_idle() {
     }
 }
 
-/// Remove fragments whose owning project no longer has a running container.
-/// Fragments touched in the last 30s are kept — a session in startup may have
-/// just written one before its container is visible in `docker ps`.
+const ORPHAN_GRACE_SECS: u64 = 300;
+
 pub fn reconcile_orphan_fragments() {
     let Some(running) = running_sbx_project_names() else {
         return;
@@ -304,10 +307,11 @@ pub fn reconcile_orphan_fragments() {
         if let Ok(meta) = entry.metadata()
             && let Ok(mtime) = meta.modified()
             && let Ok(age) = now.duration_since(mtime)
-            && age.as_secs() < 30
+            && age.as_secs() < ORPHAN_GRACE_SECS
         {
             continue;
         }
+        delete_project_dns_routes(&name);
         let _ = std::fs::remove_file(entry.path());
         log(format!(
             "public: pruned orphan fragment for {name} (no live container)"

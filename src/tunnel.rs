@@ -534,7 +534,7 @@ fn container_bridge_ip(name: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-fn resolve_owner_ip(netns_owner: &str) -> Option<String> {
+pub fn resolve_owner_ip(netns_owner: &str) -> Option<String> {
     for i in 0..10 {
         if let Some(ip) = container_bridge_ip(netns_owner) {
             return Some(ip);

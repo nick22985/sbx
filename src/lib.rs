@@ -13,6 +13,7 @@ pub mod project;
 pub mod proxy;
 pub mod public;
 pub mod service;
+pub mod socks;
 pub mod tailscale;
 pub mod tunnel;
 pub mod util;

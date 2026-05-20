@@ -44,6 +44,8 @@ pub struct Config {
     pub public: BTreeMap<String, u16>,
     #[serde(default, rename = "tunnel", skip_serializing_if = "Vec::is_empty")]
     pub tunnels: Vec<Tunnel>,
+    #[serde(default, rename = "socks", skip_serializing_if = "Vec::is_empty")]
+    pub socks: Vec<Socks>,
     #[serde(default, skip_serializing_if = "Services::is_empty")]
     pub services: Services,
     #[serde(
@@ -104,6 +106,18 @@ impl TunnelRight {
             TunnelRight::Address(s) => s.clone(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Socks {
+    pub port: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pass: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -232,6 +246,7 @@ impl Config {
         extend_dedup(&mut self.mounts, other.mounts);
         extend_dedup(&mut self.caches, other.caches);
         extend_dedup_tunnels(&mut self.tunnels, other.tunnels);
+        extend_dedup_socks(&mut self.socks, other.socks);
         for (k, v) in other.hostname {
             self.hostname.insert(k, v);
         }
@@ -297,6 +312,16 @@ fn extend_dedup_tunnels(dst: &mut Vec<Tunnel>, src: Vec<Tunnel>) {
     }
 }
 
+fn extend_dedup_socks(dst: &mut Vec<Socks>, src: Vec<Socks>) {
+    let mut seen: Vec<u16> = dst.iter().map(|s| s.port).collect();
+    for s in src {
+        if !seen.contains(&s.port) {
+            seen.push(s.port);
+            dst.push(s);
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct GlobalConfig {
@@ -306,6 +331,8 @@ pub struct GlobalConfig {
     pub caches: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_home: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_bare_repo: bool,
 }
 
 impl GlobalConfig {
@@ -342,6 +369,8 @@ pub struct FlavorConfig {
     pub caches: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_bare_repo: bool,
 }
 
 impl FlavorConfig {
@@ -409,6 +438,7 @@ mod tests {
             mounts: vec!["~/.config/nvim".into()],
             caches: vec![".local/share/nvim".into(), ".cache/nvim".into()],
             start: Some("nvim .".into()),
+            allow_bare_repo: false,
         };
         let written = original.save("nvim").unwrap();
         assert_eq!(written, cfg.join("flavors/nvim/config.toml"));
@@ -434,6 +464,7 @@ mod tests {
             mounts: vec!["~/.cache/shared".into()],
             caches: vec![".cache/global".into()],
             container_home: None,
+            allow_bare_repo: false,
         };
         let a = round_trip(&cfg);
         let b = round_trip(&cfg);
@@ -482,6 +513,12 @@ mod tests {
                     right: TunnelRight::Address("db:5432".into()),
                 },
             ],
+            socks: vec![Socks {
+                port: 1080,
+                name: Some("mongo".into()),
+                user: None,
+                pass: None,
+            }],
             services: Services {
                 enabled: vec!["postgres".into()],
             },

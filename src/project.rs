@@ -42,6 +42,74 @@ fn git_rev_parse(dir: &Path, arg: &str) -> Option<PathBuf> {
     }
 }
 
+/// True when `dir` is inside a bare git repository (no working tree).
+/// Mounting one into a container is almost always a mistake: there are no
+/// source files to act on, so commands like `npm install` ENOENT immediately.
+pub fn is_bare_repo(dir: &Path) -> bool {
+    let Ok(out) = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "--is-bare-repository"])
+        .output()
+    else {
+        return false;
+    };
+    out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "true"
+}
+
+fn git_worktree_paths(dir: &Path) -> Vec<PathBuf> {
+    let Ok(out) = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree ").map(PathBuf::from))
+        .collect()
+}
+
+/// If `dir` is a bare repository, exit with a clear message pointing the user
+/// at the working worktrees instead of letting docker mount an empty tree.
+pub fn refuse_if_bare(dir: &Path, flavor: Option<&str>) {
+    if !is_bare_repo(dir) {
+        return;
+    }
+    if crate::config::GlobalConfig::load_or_default().allow_bare_repo {
+        return;
+    }
+    if let Some(f) = flavor
+        && crate::config::FlavorConfig::load_or_default(f).allow_bare_repo
+    {
+        return;
+    }
+    let mut msg = format!(
+        "{} is a bare git repository (no working tree).\n  cd into a worktree before running sbx.",
+        dir.display()
+    );
+    let mut worktrees: Vec<PathBuf> = git_worktree_paths(dir)
+        .into_iter()
+        .filter(|p| p != dir)
+        .collect();
+    worktrees.sort();
+    if !worktrees.is_empty() {
+        msg.push_str("\n  available worktrees:");
+        for wt in worktrees.iter().take(10) {
+            msg.push_str(&format!("\n    {}", wt.display()));
+        }
+        if worktrees.len() > 10 {
+            msg.push_str(&format!("\n    ... and {} more", worktrees.len() - 10));
+        }
+    }
+    crate::util::die(msg);
+}
+
 fn private_key(base: &Path) -> String {
     let home = home_dir();
     if let Ok(rest) = base.strip_prefix(&home) {

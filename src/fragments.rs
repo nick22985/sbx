@@ -20,6 +20,18 @@ pub fn remove(dir: &Path, pname: &str) {
     let _ = std::fs::remove_file(dir.join(pname));
 }
 
+/// Bump a fragment's mtime to now without altering contents. Used to mark a
+/// fragment as "freshly seen" so reconcile's grace-period skips it on the
+/// next pass, letting a quick same-name restart reuse the existing
+/// configuration.
+pub fn touch(dir: &Path, pname: &str) {
+    let path = dir.join(pname);
+    let Ok(body) = std::fs::read(&path) else {
+        return;
+    };
+    let _ = std::fs::write(&path, body);
+}
+
 /// Read every file in `dir`, parse each via `config_lines`, dedup, and return
 /// sorted lines. Missing `dir` yields an empty Vec.
 pub fn merged(dir: &Path) -> Vec<String> {

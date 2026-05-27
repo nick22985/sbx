@@ -54,6 +54,8 @@ pub struct Config {
         skip_serializing_if = "HostProxy::is_empty"
     )]
     pub host_proxy: HostProxy,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub profiles: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -202,6 +204,11 @@ impl Config {
             };
             out.merge(cfg);
         }
+        // Back-compat: fold the legacy `[claude] profile = "..."` pin into the
+        // generic `[profiles]` map so profile resolution stays flavor-agnostic.
+        if let Some(p) = out.claude.profile.clone() {
+            out.profiles.entry("claude".to_string()).or_insert(p);
+        }
         out
     }
 
@@ -265,6 +272,9 @@ impl Config {
         extend_dedup(&mut self.services.enabled, other.services.enabled);
         self.host_proxy.enabled |= other.host_proxy.enabled;
         extend_dedup(&mut self.host_proxy.allow, other.host_proxy.allow);
+        for (k, v) in other.profiles {
+            self.profiles.insert(k, v);
+        }
     }
 
     pub fn save(&self, root: &Path) -> io::Result<PathBuf> {
@@ -371,6 +381,135 @@ pub struct FlavorConfig {
     pub start: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_bare_repo: bool,
+    /// Presence of this table marks the flavor as a first-class AI/CLI agent,
+    /// launchable directly via `sbx <flavor> [args...]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<Agent>,
+}
+
+/// Declarative description of a launchable agent. Lives in a flavor's
+/// `config.toml` under `[agent]`, so a new agent is just a flavor dir
+/// (Dockerfile + config.toml) with no Rust changes.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Agent {
+    /// Binary to exec inside the container. Defaults to the flavor name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bin: Option<String>,
+    /// Auth + config artifacts bind-mounted host->container so logins/sessions
+    /// persist. Each entry is either a bare path (a scoped dir, from the host
+    /// or the active profile) or a [`PersistSpec`] for files, shared dirs,
+    /// seeding, etc.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub persist: Vec<Persist>,
+    /// Flags injected before passthrough args to grant tool autonomy, unless
+    /// `--safe` is passed or one is already present in the args.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub autonomy: Vec<String>,
+    /// Extra flags (beyond `autonomy`) that, if present in the args, count as
+    /// "already autonomous" and suppress injection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub autonomy_detect: Vec<String>,
+    /// Host env vars forwarded into the container when set and non-empty
+    /// (e.g. API tokens). Listed in the agent's own precedence order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forward_env: Vec<String>,
+    /// Enable claude-style named profiles (`--profile`, `sbx claude profile`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub profiles: bool,
+    /// Enable claude-style `--remote-control` injection (`--rc`/`--no-rc`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remote_control: bool,
+}
+
+/// One persisted artifact for an agent: either a bare path (shorthand for a
+/// scoped directory) or a detailed [`PersistSpec`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum Persist {
+    Simple(String),
+    Detailed(PersistSpec),
+}
+
+/// Detailed persist entry. Defaults reproduce the bare-string behaviour: a
+/// directory, scoped to the active profile (host home when none).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub struct PersistSpec {
+    /// Path under `container_home` where this is mounted; also the source path
+    /// (under the host home, or the profile dir) unless `store` overrides the
+    /// profile-side location.
+    pub path: String,
+    /// Bind a single file (auto-created empty when needed) rather than a dir.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub file: bool,
+    /// Always bind from the host home, ignoring the active profile (e.g. a
+    /// session dir shared across all profiles and the host).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shared: bool,
+    /// On `profile add`, seed this entry by copying the host's copy into the
+    /// new profile dir (or writing `seed_default` when the host lacks it).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub seed: bool,
+    /// Content written when seeding and the host source is absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed_default: Option<String>,
+    /// Profile-dir-relative storage path when it differs from `path` (e.g.
+    /// store `.credentials.json` at the profile root but mount it inside
+    /// `.claude/`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store: Option<String>,
+    /// Bind only when the source already exists; never create it. Used for
+    /// host-home files we must not fabricate (e.g. `~/.claude.json`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub optional: bool,
+}
+
+impl PersistSpec {
+    /// Profile-dir-relative storage path (defaults to `path`).
+    pub fn store_path(&self) -> &str {
+        self.store.as_deref().unwrap_or(&self.path)
+    }
+}
+
+impl Persist {
+    /// Normalise to a [`PersistSpec`] (a bare string becomes a scoped dir).
+    pub fn spec(&self) -> PersistSpec {
+        match self {
+            Persist::Simple(path) => PersistSpec {
+                path: path.clone(),
+                ..Default::default()
+            },
+            Persist::Detailed(spec) => spec.clone(),
+        }
+    }
+}
+
+impl From<&str> for Persist {
+    fn from(s: &str) -> Self {
+        Persist::Simple(s.to_string())
+    }
+}
+
+impl From<String> for Persist {
+    fn from(s: String) -> Self {
+        Persist::Simple(s)
+    }
+}
+
+impl Agent {
+    /// The binary to launch: explicit `bin`, else the flavor name.
+    pub fn binary<'a>(&'a self, flavor: &'a str) -> &'a str {
+        self.bin.as_deref().unwrap_or(flavor)
+    }
+
+    /// True if `args` already contains a flag that grants autonomy, so we
+    /// should not inject our own.
+    pub fn already_autonomous(&self, args: &[String]) -> bool {
+        args.iter().any(|a| {
+            self.autonomy.iter().any(|f| f == a) || self.autonomy_detect.iter().any(|f| f == a)
+        })
+    }
 }
 
 impl FlavorConfig {
@@ -439,6 +578,7 @@ mod tests {
             caches: vec![".local/share/nvim".into(), ".cache/nvim".into()],
             start: Some("nvim .".into()),
             allow_bare_repo: false,
+            agent: None,
         };
         let written = original.save("nvim").unwrap();
         assert_eq!(written, cfg.join("flavors/nvim/config.toml"));
@@ -446,6 +586,54 @@ mod tests {
         assert_eq!(loaded.mounts, original.mounts);
         assert_eq!(loaded.caches, original.caches);
         assert_eq!(loaded.start, original.start);
+    }
+
+    #[test]
+    fn empty_agent_table_marks_flavor_as_agent() {
+        // A bare `[agent]` with no keys is enough to flag the flavor; bin then
+        // defaults to the flavor name.
+        let cfg: FlavorConfig = toml::from_str("[agent]\n").unwrap();
+        let agent = cfg.agent.expect("[agent] table should deserialize to Some");
+        assert_eq!(agent.binary("opencode"), "opencode");
+        assert!(agent.persist.is_empty());
+    }
+
+    #[test]
+    fn missing_agent_table_leaves_flavor_non_agent() {
+        let cfg: FlavorConfig = toml::from_str("caches = [\".npm\"]\n").unwrap();
+        assert!(cfg.agent.is_none());
+    }
+
+    #[test]
+    fn agent_round_trips_and_binary_prefers_explicit_bin() {
+        let cfg: FlavorConfig = toml::from_str(
+            "[agent]\n\
+             bin = \"copilot\"\n\
+             persist = [\".copilot\"]\n\
+             autonomy = [\"--allow-all\"]\n\
+             autonomy-detect = [\"--yolo\"]\n\
+             forward-env = [\"GH_TOKEN\"]\n",
+        )
+        .unwrap();
+        let agent = cfg.agent.clone().unwrap();
+        assert_eq!(agent.binary("copilot"), "copilot");
+        assert_eq!(agent.persist, vec![Persist::from(".copilot")]);
+        // Stable round-trip.
+        let s = toml::to_string_pretty(&cfg).unwrap();
+        let reparsed: FlavorConfig = toml::from_str(&s).unwrap();
+        assert_eq!(reparsed.agent.unwrap().forward_env, vec!["GH_TOKEN"]);
+    }
+
+    #[test]
+    fn already_autonomous_detects_inject_and_detect_flags() {
+        let agent = Agent {
+            autonomy: vec!["--allow-all".into()],
+            autonomy_detect: vec!["--yolo".into()],
+            ..Default::default()
+        };
+        assert!(agent.already_autonomous(&["--allow-all".into()]));
+        assert!(agent.already_autonomous(&["--yolo".into()]));
+        assert!(!agent.already_autonomous(&["chat".into()]));
     }
 
     #[test]
@@ -526,6 +714,11 @@ mod tests {
                 enabled: true,
                 allow: vec!["github.com".into()],
             },
+            profiles: {
+                let mut m = BTreeMap::new();
+                m.insert("opencode".to_string(), "work".to_string());
+                m
+            },
         };
 
         let s1 = toml::to_string_pretty(&cfg).unwrap();
@@ -548,6 +741,37 @@ mod tests {
         assert!(parsed.host_proxy.enabled);
         assert_eq!(parsed.network.vpn.as_deref(), Some("/tmp/x.ovpn"));
         assert_eq!(parsed.claude.profile.as_deref(), Some("work"));
+        assert_eq!(
+            parsed.profiles.get("opencode").map(String::as_str),
+            Some("work")
+        );
+    }
+
+    #[test]
+    fn merge_profiles_local_overrides_per_agent() {
+        let mut a = Config {
+            profiles: {
+                let mut m = BTreeMap::new();
+                m.insert("opencode".into(), "private".into());
+                m
+            },
+            ..Default::default()
+        };
+        let b = Config {
+            profiles: {
+                let mut m = BTreeMap::new();
+                m.insert("opencode".into(), "local".into());
+                m.insert("copilot".into(), "work".into());
+                m
+            },
+            ..Default::default()
+        };
+        a.merge(b);
+        assert_eq!(
+            a.profiles.get("opencode").map(String::as_str),
+            Some("local")
+        );
+        assert_eq!(a.profiles.get("copilot").map(String::as_str), Some("work"));
     }
 
     #[test]

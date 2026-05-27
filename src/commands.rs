@@ -1,5 +1,5 @@
+pub mod agent;
 pub mod build;
-pub mod claude;
 pub mod clean;
 pub mod docker;
 pub mod env;
@@ -8,7 +8,9 @@ pub mod host_proxy;
 pub mod hostname;
 pub mod init;
 pub mod migrate;
+pub mod mount;
 pub mod port;
+pub mod profiles;
 pub mod proxy;
 pub mod public;
 pub mod purge;

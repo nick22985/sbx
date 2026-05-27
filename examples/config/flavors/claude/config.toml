@@ -13,3 +13,32 @@
 caches = [
     "@sbx-claude-local:.local",
 ]
+
+# Marks claude as a launchable agent (`sbx claude [args...]`). The runner binds
+# the persist entries (below), injects the autonomy flag (unless `--safe`), and
+# enables claude's named profiles + remote-control.
+#
+# persist entries are either a bare path (a scoped dir, from the host home or
+# the active profile dir) or an inline table:
+#   path          mount path under container_home (and the source path)
+#   shared        always bind from the host home, ignoring the active profile
+#   file          bind a single file (auto-created) rather than a directory
+#   seed          on `profile add`, copy the host's copy into the new profile
+#   seed-default  content to write when seeding and the host file is absent
+#   store         profile-dir-relative storage path when it differs from `path`
+#   optional      bind only if the source exists (never fabricate host files)
+#
+# claude's split: `.claude` (sessions/history) is shared across profiles, while
+# auth swaps per profile - `.claude.json` (account + settings, seeded from host)
+# and `.credentials.json` (token, stored at the profile root, overlaid inside
+# the shared `.claude` dir only when a profile is active).
+[agent]
+autonomy = ["--dangerously-skip-permissions"]
+profiles = true
+remote-control = true
+
+persist = [
+    { path = ".claude", shared = true },
+    { path = ".claude.json", file = true, seed = true, seed-default = "{}\n", optional = true },
+    { path = ".claude/.credentials.json", file = true, store = ".credentials.json" },
+]

@@ -1,0 +1,26 @@
+# Flavor config — caches shipped with this flavor's Dockerfile.
+# Lives at $XDG_CONFIG_HOME/sbx/flavors/copilot/config.toml.
+#
+# Syntax (one entry per line):
+#   "<host_rel>"                          host bind, container = <container_home>/<host_rel>
+#   "<host_rel>:<container_path>"         host bind, explicit container path
+#   "@<volume_name>:<container_path>"     named docker volume (auto-tracked by clean/purge)
+# Container paths that don't start with '/' resolve under container_home.
+#
+# npm's cache is persisted for MCP/tool installs.
+caches = [
+    ".npm",
+]
+
+# Marks copilot as a launchable agent (`sbx copilot [args...]`). persist binds
+# ~/.copilot (auth + state). `--allow-all` is injected for autonomy unless
+# `--safe` or an equivalent flag is passed; GitHub tokens are forwarded from
+# the host environment in Copilot CLI's precedence order. `profiles = true`
+# enables named logins via `sbx copilot profile ...` and `sbx copilot -p NAME`
+# (each profile isolates the persist dir above).
+[agent]
+persist = [".copilot"]
+autonomy = ["--allow-all"]
+autonomy-detect = ["--allow-all-tools", "--yolo"]
+forward-env = ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]
+profiles = true

@@ -89,6 +89,22 @@ fn complete_configured_port(current: &OsStr) -> Vec<CompletionCandidate> {
         .collect()
 }
 
+fn complete_configured_mount(current: &OsStr) -> Vec<CompletionCandidate> {
+    let cur = current.to_str().unwrap_or("");
+    let Ok(cwd) = std::env::current_dir() else {
+        return Vec::new();
+    };
+    let mut mounts = crate::config::GlobalConfig::load_or_default().mounts;
+    if let Some((_, root)) = project_flavor(&cwd) {
+        mounts.extend(crate::config::Config::load_or_default(&root).mounts);
+    }
+    mounts
+        .into_iter()
+        .filter(|m| cur.is_empty() || fuzzy(cur, m))
+        .map(CompletionCandidate::new)
+        .collect()
+}
+
 fn complete_configured_tunnel_key(current: &OsStr) -> Vec<CompletionCandidate> {
     let cur = current.to_str().unwrap_or("");
     let Ok(cwd) = std::env::current_dir() else {
@@ -169,15 +185,6 @@ fn complete_env_key(current: &OsStr) -> Vec<CompletionCandidate> {
         .collect()
 }
 
-fn complete_claude_profile(current: &OsStr) -> Vec<CompletionCandidate> {
-    let cur = current.to_str().unwrap_or("");
-    crate::commands::claude::list_profiles()
-        .into_iter()
-        .filter(|p| cur.is_empty() || fuzzy(cur, p))
-        .map(CompletionCandidate::new)
-        .collect()
-}
-
 fn complete_tailscale_profile(current: &OsStr) -> Vec<CompletionCandidate> {
     let cur = current.to_str().unwrap_or("");
     crate::commands::tailscale::list_profiles()
@@ -210,7 +217,16 @@ fn complete_vpn_name(current: &OsStr) -> Vec<CompletionCandidate> {
 }
 
 fn complete_top_level(current: &OsStr) -> Vec<CompletionCandidate> {
-    complete_flavor(current)
+    let cur = current.to_str().unwrap_or("");
+    let mut out = complete_flavor(current);
+    // Agent flavors are internal (hidden from `complete_flavor`) but are valid
+    // ad-hoc targets, e.g. `sbx opencode`.
+    for f in crate::flavor::agent_flavors() {
+        if (cur.is_empty() || fuzzy(cur, &f)) && !out.iter().any(|c| c.get_value() == f.as_str()) {
+            out.push(CompletionCandidate::new(f));
+        }
+    }
+    out
 }
 
 #[derive(Parser)]
@@ -225,8 +241,14 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Cmd>,
 
+    /// Ad-hoc launch: a flavor to shell into, or an agent flavor (one with an
+    /// `[agent]` block) to run directly, e.g. `sbx opencode auth login`.
     #[arg(add = ArgValueCompleter::new(complete_top_level))]
     pub flavor: Option<String>,
+
+    /// Args passed through to the agent when `flavor` names an agent flavor.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub flavor_args: Vec<String>,
 }
 
 #[derive(Subcommand)]
@@ -249,6 +271,9 @@ pub enum Cmd {
     Build {
         #[arg(add = ArgValueCompleter::new(complete_flavor_or_all))]
         flavor: Option<String>,
+        /// Build without the Docker layer cache (same as `sbx rebuild`)
+        #[arg(long = "no-cache")]
+        no_cache: bool,
     },
     Rebuild {
         #[arg(add = ArgValueCompleter::new(complete_flavor_or_all))]
@@ -299,52 +324,6 @@ pub enum Cmd {
     Completions {
         shell: clap_complete::Shell,
     },
-    Claude {
-        #[command(subcommand)]
-        action: Option<ClaudeCmd>,
-        #[arg(short = 'm', long = "mount", value_name = "PATH")]
-        mounts: Vec<String>,
-        #[arg(short = 'p', long = "profile", value_name = "NAME",
-              add = ArgValueCompleter::new(complete_claude_profile))]
-        profile: Option<String>,
-        #[arg(short = 's', long = "safe")]
-        safe: bool,
-        #[arg(long = "rc", conflicts_with = "no_rc")]
-        rc: bool,
-        #[arg(long = "no-rc")]
-        no_rc: bool,
-        #[arg(long = "docker")]
-        docker: bool,
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum ClaudeCmd {
-    #[command(alias = "bash")]
-    Shell,
-    Build,
-    Rebuild,
-    Profile {
-        #[command(subcommand)]
-        action: Option<ProfileCmd>,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum ProfileCmd {
-    #[command(alias = "ls")]
-    List,
-    Add {
-        name: String,
-    },
-    #[command(alias = "remove", alias = "del", alias = "delete")]
-    Rm {
-        #[arg(add = ArgValueCompleter::new(complete_claude_profile))]
-        name: String,
-    },
-    Current,
 }
 
 #[derive(Subcommand)]
@@ -377,6 +356,27 @@ pub enum TunnelCmd {
         direction: String,
         #[arg(add = ArgValueCompleter::new(complete_configured_tunnel_key))]
         left: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum MountCmd {
+    #[command(alias = "ls")]
+    List {
+        #[arg(short = 'g', long = "global")]
+        global: bool,
+    },
+    Add {
+        spec: String,
+        #[arg(short = 'g', long = "global")]
+        global: bool,
+    },
+    #[command(alias = "remove", alias = "del", alias = "delete")]
+    Rm {
+        #[arg(add = ArgValueCompleter::new(complete_configured_mount))]
+        spec: String,
+        #[arg(short = 'g', long = "global")]
+        global: bool,
     },
 }
 
@@ -504,6 +504,11 @@ pub enum ConfigCmd {
         #[command(subcommand)]
         action: Option<PortCmd>,
     },
+    #[command(alias = "mounts")]
+    Mount {
+        #[command(subcommand)]
+        action: Option<MountCmd>,
+    },
     #[command(alias = "hostnames", alias = "host")]
     Hostname {
         #[command(subcommand)]
@@ -627,4 +632,47 @@ pub enum ServiceCmd {
         #[arg(add = ArgValueCompleter::new(complete_configured_service))]
         name: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn bare_agent_parses_as_flavor() {
+        let cli = Cli::try_parse_from(["sbx", "opencode"]).expect("parse");
+        assert!(cli.command.is_none());
+        assert_eq!(cli.flavor.as_deref(), Some("opencode"));
+        assert!(cli.flavor_args.is_empty());
+    }
+
+    #[test]
+    fn agent_passthrough_args_captured() {
+        let cli = Cli::try_parse_from(["sbx", "opencode", "auth", "login"]).expect("parse");
+        assert_eq!(cli.flavor.as_deref(), Some("opencode"));
+        assert_eq!(cli.flavor_args, vec!["auth", "login"]);
+    }
+
+    #[test]
+    fn agent_hyphenated_args_preserved() {
+        let cli = Cli::try_parse_from(["sbx", "copilot", "--resume", "last"]).expect("parse");
+        assert_eq!(cli.flavor.as_deref(), Some("copilot"));
+        assert_eq!(cli.flavor_args, vec!["--resume", "last"]);
+    }
+
+    #[test]
+    fn claude_parses_as_flavor_with_passthrough() {
+        let cli = Cli::try_parse_from(["sbx", "claude", "profile", "list"]).expect("parse");
+        assert!(cli.command.is_none());
+        assert_eq!(cli.flavor.as_deref(), Some("claude"));
+        assert_eq!(cli.flavor_args, vec!["profile", "list"]);
+    }
+
+    #[test]
+    fn known_subcommand_not_treated_as_flavor() {
+        let cli = Cli::try_parse_from(["sbx", "build", "claude"]).expect("parse");
+        assert!(matches!(cli.command, Some(Cmd::Build { .. })));
+        assert!(cli.flavor.is_none());
+    }
 }

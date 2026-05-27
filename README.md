@@ -153,6 +153,7 @@ overriding. `sbx config <field> ...` writes to the local file only.
 
 ```
 sbx config port     [list|add N|rm N]
+sbx config mount    [list|add SPEC|rm SPEC] [-g]   SPEC: host[:container][:ro]; -g targets the global config
 sbx config hostname [list|add HOST PORT|rm HOST]   Map HOST.sbx.localhost via the proxy sidecar
 sbx config tunnel   [list|add DIR L R|rm DIR L]    Forward TCP between host, sandbox, and remote (DIR: out/in/via/via-host)
 sbx config env      [list|set K=V|unset K]         Manages ~/.config/sbx/env
@@ -437,8 +438,10 @@ account.
 
 ## sbx claude
 
-`sbx claude` is one of the flavors but has its own subtree because it has
-some extra knobs:
+`sbx claude` is just an [agent](#agents-sbx-opencode--sbx-copilot--your-own)
+like the rest, sharing the exact same CLI surface. Its `[agent]` config
+opts into two extra features: `--dangerously-skip-permissions` autonomy and
+`remote-control = true`.
 
 ```
 sbx claude [-m PATH]... [-p PROFILE] [-s] [--rc] [--docker] [args...]
@@ -499,6 +502,104 @@ opt in per-session with `--docker`, or globally with `SBX_DOCKER=1` in
 anything inside the container can `docker run --privileged -v /:/host ...` and
 escape the sandbox. Only enable this when you trust what's running inside.
 
+## Agents (sbx opencode / sbx copilot / your own)
+
+An **agent** is any flavor whose `config.toml` declares an `[agent]` block.
+Such a flavor launches its CLI directly, with no per-agent Rust code, just a
+flavor directory:
+
+```
+sbx opencode [args...]                # opencode
+sbx copilot  [args...]                # GitHub Copilot CLI
+sbx <agent>  [-m PATH]... [-p PROFILE] [-s|--safe] [--docker] [args...]
+sbx <agent>  shell | bash             # drop to bash inside the sandbox
+sbx <agent>  build | rebuild          # build/rebuild the agent image
+sbx <agent>  profile [list|add NAME|rm NAME|current]
+```
+
+sbx's own flags (`-m`/`--mount`, `-p`/`--profile`, `-s`/`--safe`, `--docker`,
+`--shell`) come *before* any passthrough args, which are forwarded verbatim to
+the inner CLI. The reserved verbs above (`shell`/`bash`, `build`, `rebuild`,
+`profile`) are claimed by sbx when they appear first, so they shadow any
+same-named subcommand of the inner CLI. Agents are independent of the project's
+flavor and bind-mount cwd at its host path. `sbx claude` is one of these agents
+(it just enables a couple of extra features in its config, see
+[above](#sbx-claude)).
+
+### Defining an agent
+
+Add `[agent]` to a flavor's `config.toml`:
+
+```toml
+[agent]
+bin = "opencode"        # binary to exec; defaults to the flavor name
+persist = [".config/opencode", ".local/share/opencode"]  # host dirs bind-mounted for auth/config
+autonomy = ["--allow-all"]            # flags injected unless --safe / already present
+autonomy-detect = ["--yolo"]          # extra flags that count as "already autonomous"
+forward-env = ["GH_TOKEN"]            # host env vars forwarded when set
+profiles = true                       # enable named logins (sbx <agent> profile ...)
+```
+
+Pair it with a `Dockerfile` that installs the CLI and `sbx <name>` just works.
+
+### Autonomy
+
+Since the container is already a sandbox, agents auto-inject their `autonomy`
+flags so prompts don't get in the way. `sbx copilot` injects `--allow-all`;
+use `--safe` to opt out for one invocation, or pass your own
+`--allow-all` / `--yolo` and it won't be duplicated. opencode declares no
+autonomy flag; it's autonomous by default and its prompting is configured via
+the `permission` key in `opencode.json` (shared from the host through the
+mounted `~/.config/opencode`).
+
+### Auth and config
+
+The `persist` dirs are bind-mounted from the host, so logins are shared with
+the host install:
+
+- **opencode** persists `~/.config/opencode` and `~/.local/share/opencode`
+  (provider creds in `auth.json`, sessions). Log in once on the host with
+  `opencode auth login`, or do it inside the sandbox (`sbx opencode auth
+  login`); it persists either way.
+- **copilot** persists `~/.copilot` (auth + state) and forwards
+  `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN` from the host env when
+  set, so token auth works without an interactive `/login`.
+
+Agents honor the global / per-project [mount files](#mounts) plus ad-hoc
+`-m / --mount <SPEC>`, and the opt-in docker socket via `--docker` /
+`SBX_DOCKER=1` (same caveats as `sbx claude`).
+
+### Profiles
+
+Agents with `profiles = true` support multiple named logins, so you can keep
+e.g. a work and a personal account side by side:
+
+```
+sbx opencode profile add work        # create an empty profile
+sbx opencode profile list            # list profiles (* marks the active one)
+sbx opencode profile current         # print the active profile
+sbx opencode profile rm work         # delete a profile
+sbx opencode -p work [args...]       # run using that profile
+```
+
+Each profile lives at `$XDG_CONFIG_HOME/sbx/<agent>-profiles/<name>/` and holds
+its own copy of the agent's `persist` dirs. When a profile is active those dirs
+bind from the profile instead of your host home, so logins are fully isolated.
+A freshly added profile starts logged out, so sign in once inside it (`sbx
+opencode -p work auth login`) and it persists there. With no profile selected,
+the agent binds from your host home and shares the host login.
+
+Pin a project to a profile with a `[profiles]` entry in `./.sbx/config.toml`:
+
+```toml
+[profiles]
+opencode = "work"
+copilot = "personal"
+```
+
+A `-p NAME` flag overrides the pin for one invocation. (`sbx claude` has the
+same feature via its own `[claude] profile` key, see [above](#profiles).)
+
 ## Files
 
 Three TOML scopes, one schema per scope, layered project > global > flavor:
@@ -506,7 +607,8 @@ Three TOML scopes, one schema per scope, layered project > global > flavor:
 - `./.sbx/config.toml`                       - per-project: every project knob
   (`flavor`, `ports`, `mounts`, `caches`, `ssh`, `docker`, `gui`, `start`,
   `[network]`, `[hostname]`, `[public]`, `[[tunnel]]`, `[services]`,
-  `[host_proxy]`, `[claude]`, plus `name` / `port-offset` worktree overrides).
+  `[host_proxy]`, `[claude]`, `[profiles]`, plus `name` / `port-offset`
+  worktree overrides).
 - `$XDG_CONFIG_HOME/sbx/config.toml`                  - global: `mounts` and `caches`
   applied to every sbx session.
 - `$XDG_CONFIG_HOME/sbx/flavors/<flavor>/config.toml` - flavor: `mounts` and
@@ -518,6 +620,7 @@ Plus:
 - `$XDG_CONFIG_HOME/sbx/flavors/<flavor>/Dockerfile`   - base image source per flavor.
 - `$XDG_CONFIG_HOME/sbx/env`                           - persistent env (KEY=value, chmod 600).
 - `$XDG_CONFIG_HOME/sbx/claude-profiles/<n>/`          - alternate `~/.claude` per profile.
+- `$XDG_CONFIG_HOME/sbx/<agent>-profiles/<n>/`         - isolated `persist` dirs per agent profile.
 
 See [`examples/sbx/`](examples/sbx/) for an annotated project `config.toml`
 and [`examples/config/`](examples/config/) for the global + per-flavor layout.

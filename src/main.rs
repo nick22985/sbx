@@ -2,9 +2,9 @@ use clap::{CommandFactory, Parser};
 use std::io;
 
 use sbx::cli::{
-    ClaudeCmd, Cli, Cmd, ConfigCmd, DockerCmd, EnvCmd, GuiCmd, HostProxyCmd, HostnameCmd, NetCmd,
-    PortCmd, ProfileCmd, ProxyCmd, PublicCmd, ServiceCmd, SshCmd, StartCmd, TailscaleCmd,
-    TunnelCmd, TunnelTopCmd, VpnCmd,
+    Cli, Cmd, ConfigCmd, DockerCmd, EnvCmd, GuiCmd, HostProxyCmd, HostnameCmd, MountCmd, NetCmd,
+    PortCmd, ProxyCmd, PublicCmd, ServiceCmd, SshCmd, StartCmd, TailscaleCmd, TunnelCmd,
+    TunnelTopCmd, VpnCmd,
 };
 use sbx::commands;
 use sbx::env_file;
@@ -28,7 +28,9 @@ fn main() {
         }
         Some(Cmd::Run) => std::process::exit(commands::run::run(&cwd())),
         Some(Cmd::Stop) => commands::stop::run(&cwd()),
-        Some(Cmd::Build { flavor }) => commands::build::run(&cwd(), false, flavor.as_deref()),
+        Some(Cmd::Build { flavor, no_cache }) => {
+            commands::build::run(&cwd(), no_cache, flavor.as_deref())
+        }
         Some(Cmd::Rebuild { flavor }) => commands::build::run(&cwd(), true, flavor.as_deref()),
         Some(Cmd::Clean { flavor }) => commands::clean::run(flavor.as_deref()),
         Some(Cmd::Purge { flavor }) => commands::purge::run(flavor.as_deref()),
@@ -121,56 +123,25 @@ fn main() {
         Some(Cmd::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "sbx", &mut io::stdout());
         }
-        Some(Cmd::Claude {
-            action,
-            mounts,
-            profile,
-            safe,
-            rc,
-            no_rc,
-            docker,
-            args,
-        }) => match action {
-            Some(ClaudeCmd::Shell) => std::process::exit(commands::claude::run(
-                &cwd(),
-                Vec::new(),
-                true,
-                mounts,
-                profile,
-                safe,
-                rc,
-                no_rc,
-                docker,
-            )),
-
-            Some(ClaudeCmd::Build) => commands::claude::build(false),
-            Some(ClaudeCmd::Rebuild) => commands::claude::build(true),
-            Some(ClaudeCmd::Profile { action }) => match action.unwrap_or(ProfileCmd::List) {
-                ProfileCmd::List => commands::claude::print_profile_list(&cwd()),
-                ProfileCmd::Add { name } => commands::claude::add_profile(&name),
-                ProfileCmd::Rm { name } => commands::claude::remove_profile(&name),
-                ProfileCmd::Current => {
-                    commands::claude::print_current_profile(&cwd(), profile.as_deref())
-                }
-            },
-            None => std::process::exit(commands::claude::run(
-                &cwd(),
-                args,
-                false,
-                mounts,
-                profile,
-                safe,
-                rc,
-                no_rc,
-                docker,
-            )),
-        },
         None => match cli.flavor {
             None => {
                 let _ = Cli::command().print_help();
                 println!();
             }
-            Some(f) => std::process::exit(commands::shell::ad_hoc(&cwd(), &f)),
+            // Any flavor with an `[agent]` block (claude, opencode, copilot, or
+            // your own) is launched here. `agent::dispatch` handles the shared
+            // verbs (shell/build/rebuild/profile) and flags.
+            Some(f) if commands::agent::is_agent(&f) => {
+                std::process::exit(commands::agent::dispatch(&cwd(), &f, cli.flavor_args))
+            }
+            Some(f) => {
+                if !cli.flavor_args.is_empty() {
+                    die(format!(
+                        "'{f}' is a flavor, not an agent; it takes no extra args. Try: sbx shell {f}"
+                    ));
+                }
+                std::process::exit(commands::shell::ad_hoc(&cwd(), &f))
+            }
         },
     }
 }
@@ -202,6 +173,15 @@ fn dispatch_config(action: Option<ConfigCmd>) {
                 PortCmd::Rm { port } => commands::port::Action::Remove(port),
             };
             commands::port::run(&cwd(), act);
+        }
+        ConfigCmd::Mount { action } => {
+            let action = action.unwrap_or(MountCmd::List { global: false });
+            let (act, global) = match &action {
+                MountCmd::List { global } => (commands::mount::Action::List, *global),
+                MountCmd::Add { spec, global } => (commands::mount::Action::Add(spec), *global),
+                MountCmd::Rm { spec, global } => (commands::mount::Action::Remove(spec), *global),
+            };
+            commands::mount::run(&cwd(), act, global);
         }
         ConfigCmd::Hostname { action } => {
             let action = action.unwrap_or(HostnameCmd::List);

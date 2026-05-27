@@ -16,7 +16,7 @@ pub fn flavor_dir(flavor: &str) -> PathBuf {
     flavors_dir().join(flavor)
 }
 
-pub const INTERNAL_FLAVORS: &[&str] = &["base", "claude"];
+pub const INTERNAL_FLAVORS: &[&str] = &["base", "claude", "copilot", "opencode"];
 
 pub const BASE_FLAVOR: &str = "base";
 
@@ -57,6 +57,15 @@ pub fn list_flavors() -> Vec<String> {
     list_all_flavors()
         .into_iter()
         .filter(|f| !is_internal_flavor(f))
+        .collect()
+}
+
+/// Flavors that declare an `[agent]` block, i.e. are launchable directly via
+/// `sbx <flavor>`. Includes internal flavors (claude/opencode/copilot).
+pub fn agent_flavors() -> Vec<String> {
+    list_all_flavors()
+        .into_iter()
+        .filter(|f| FlavorConfig::load_or_default(f).agent.is_some())
         .collect()
 }
 

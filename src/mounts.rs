@@ -202,6 +202,7 @@ mod tests {
             caches: vec![],
             start: None,
             allow_bare_repo: false,
+            agent: None,
         }
         .save("npm")
         .unwrap();
@@ -246,6 +247,7 @@ mod tests {
             caches: vec![],
             start: None,
             allow_bare_repo: false,
+            agent: None,
         }
         .save("npm")
         .unwrap();
@@ -316,6 +318,7 @@ mod tests {
             caches: vec![],
             start: None,
             allow_bare_repo: false,
+            agent: None,
         }
         .save("nvim")
         .unwrap();

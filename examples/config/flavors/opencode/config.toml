@@ -1,0 +1,23 @@
+# Flavor config — caches shipped with this flavor's Dockerfile.
+# Lives at $XDG_CONFIG_HOME/sbx/flavors/opencode/config.toml.
+#
+# Syntax (one entry per line):
+#   "<host_rel>"                          host bind, container = <container_home>/<host_rel>
+#   "<host_rel>:<container_path>"         host bind, explicit container path
+#   "@<volume_name>:<container_path>"     named docker volume (auto-tracked by clean/purge)
+# Container paths that don't start with '/' resolve under container_home.
+#
+# npm's cache is persisted so MCP/tool installs are fast.
+caches = [
+    ".npm",
+]
+
+# Marks opencode as a launchable agent (`sbx opencode [args...]`). persist
+# binds opencode's auth + sessions from the host. opencode has no autonomy
+# CLI flag - it's config-based (the `permission` key in opencode.json, shared
+# via the mounted ~/.config/opencode), so `autonomy` is intentionally empty.
+# `profiles = true` enables named logins via `sbx opencode profile ...` and
+# `sbx opencode -p NAME` (each profile isolates the persist dirs above).
+[agent]
+persist = [".config/opencode", ".local/share/opencode"]
+profiles = true

@@ -1,6 +1,6 @@
 [package]
 name = "sbx"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 description = "Sandboxed Docker dev environments for npm/bun/rust/claude"
 authors = ["nick22985"]

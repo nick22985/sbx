@@ -273,10 +273,7 @@ mod tests {
 
     fn opencode_agent() -> Agent {
         Agent {
-            persist: vec![
-                ".config/opencode".into(),
-                ".local/share/opencode".into(),
-            ],
+            persist: vec![".config/opencode".into(), ".local/share/opencode".into()],
             profiles: true,
             ..Default::default()
         }

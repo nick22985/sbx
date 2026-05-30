@@ -166,7 +166,9 @@ fn extract_sbx_flags(args: Vec<String>, agent: &Agent, inv: &mut Invocation) -> 
             _ => {
                 if let Some(v) = a.strip_prefix("--mount=") {
                     inv.mounts.push(v.to_string());
-                } else if agent.profiles && let Some(v) = a.strip_prefix("--profile=") {
+                } else if agent.profiles
+                    && let Some(v) = a.strip_prefix("--profile=")
+                {
                     inv.profile = Some(v.to_string());
                 } else {
                     out.push(a);

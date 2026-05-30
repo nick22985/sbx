@@ -45,7 +45,16 @@ pub fn resolve(
         }
     };
 
+    let mut mount_flavors: Vec<String> = Vec::new();
     if let Some(name) = flavor {
+        mount_flavors.push(name.to_string());
+    }
+    if let Some((pf, _)) = crate::project::project_flavor(cwd)
+        && !mount_flavors.iter().any(|f| f == &pf)
+    {
+        mount_flavors.push(pf);
+    }
+    for name in &mount_flavors {
         for raw in FlavorConfig::load_or_default(name).mounts {
             push(&raw);
         }
@@ -337,6 +346,39 @@ mod tests {
             .map(|m| m.host.file_name().unwrap().to_string_lossy().to_string())
             .collect();
         assert_eq!(hosts, vec!["glob-only"]);
+    }
+
+    #[test]
+    fn resolve_includes_project_configured_flavor_for_other_run_flavor() {
+        let cfg = tmp_dir("agentflav-cfg");
+        let home = tmp_dir("agentflav-home");
+        touch_dir(&home.join("m2"));
+        let _g = set_test_paths(cfg.clone(), home.clone());
+
+        FlavorConfig {
+            mounts: vec!["~/m2".into()],
+            caches: vec![],
+            start: None,
+            allow_bare_repo: false,
+            agent: None,
+        }
+        .save("java")
+        .unwrap();
+
+        let project_root = tmp_dir("agentflav-proj");
+        Config {
+            flavor: Some("java".into()),
+            ..Default::default()
+        }
+        .save_to_dir(&project_root.join(".sbx"))
+        .unwrap();
+
+        let mounts = resolve(&project_root, Path::new("/home/dev"), &[], Some("claude"));
+        let hosts: Vec<_> = mounts
+            .iter()
+            .map(|m| m.host.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(hosts, vec!["m2"]);
     }
 
     #[test]

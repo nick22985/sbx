@@ -119,10 +119,7 @@ pub fn publish_args(tunnels: &[Tunnel]) -> Vec<String> {
     out
 }
 
-/// Builds the shell command run inside the tunnel sidecar:
-/// one socat per in:/via: entry, backgrounded, then `wait`.
-/// Returns None if no socat processes are needed.
-pub fn socat_script(tunnels: &[Tunnel]) -> Option<String> {
+pub fn socat_script(tunnels: &[Tunnel], in_host: &str) -> Option<String> {
     let mut cmds: Vec<String> = Vec::new();
     for t in tunnels {
         match t.direction {
@@ -132,8 +129,9 @@ pub fn socat_script(tunnels: &[Tunnel]) -> Option<String> {
                     Err(_) => continue,
                 };
                 cmds.push(format!(
-                    "socat -d TCP-LISTEN:{l},fork,reuseaddr TCP:host.docker.internal:{r}",
+                    "socat -d TCP-LISTEN:{l},fork,reuseaddr TCP:{h}:{r}",
                     l = t.left,
+                    h = in_host,
                     r = host_port
                 ));
             }
@@ -199,7 +197,11 @@ pub fn start_sidecar(
     let pname = project_name(project_root);
     let sidecar = sidecar_name(&pname);
 
-    let script = match socat_script(tunnels) {
+    let in_host = match share_netns {
+        Some(_) => crate::docker::bridge_gateway(),
+        None => "host.docker.internal".to_string(),
+    };
+    let script = match socat_script(tunnels, &in_host) {
         Some(s) => s,
         None if share_netns.is_none() && !publish_args.is_empty() => {
             // standalone owner with only `out:` entries: nothing for socat to do,
@@ -685,7 +687,7 @@ mod tests {
             right: "192.168.1.67:27017".into(),
         }];
         // via-host runs in its own sidecar, not the in-netns one.
-        assert!(socat_script(&tunnels).is_none());
+        assert!(socat_script(&tunnels, "host.docker.internal").is_none());
     }
 
     #[test]
@@ -753,10 +755,22 @@ mod tests {
                 right: "redis.ts.net:6379".into(),
             },
         ];
-        let s = socat_script(&tunnels).expect("script");
+        let s = socat_script(&tunnels, "host.docker.internal").expect("script");
         assert!(s.contains("TCP-LISTEN:5432,fork,reuseaddr TCP:host.docker.internal:5432"));
         assert!(s.contains("TCP-LISTEN:6379,fork,reuseaddr TCP:redis.ts.net:6379"));
         assert!(s.trim_end().ends_with("wait"));
+    }
+
+    #[test]
+    fn socat_script_in_uses_given_host() {
+        let tunnels = vec![Tunnel {
+            direction: Direction::In,
+            left: 6379,
+            right: "6379".into(),
+        }];
+        let s = socat_script(&tunnels, "172.17.0.1").expect("script");
+        assert!(s.contains("TCP-LISTEN:6379,fork,reuseaddr TCP:172.17.0.1:6379"));
+        assert!(!s.contains("host.docker.internal"));
     }
 
     #[test]
@@ -766,7 +780,7 @@ mod tests {
             left: 3000,
             right: "3000".into(),
         }];
-        assert!(socat_script(&tunnels).is_none());
+        assert!(socat_script(&tunnels, "host.docker.internal").is_none());
     }
 
     #[test]

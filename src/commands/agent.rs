@@ -6,7 +6,7 @@ use crate::docker::{self, Network, PortSpec, RunSpec};
 use crate::flavor::{build_image, container_home, image_exists_or_build, image_name};
 use crate::mounts;
 use crate::project::{project_base_name, project_name, worktree_suffix};
-use crate::util::{die, home_dir, log};
+use crate::util::{die, log};
 
 #[derive(Default)]
 pub struct Invocation {
@@ -70,7 +70,7 @@ fn launch(cwd: &Path, flavor: &str, agent: &Agent, inv: Invocation) -> i32 {
         build_entry(flavor, agent, &inv.args, &inv, cwd)
     };
 
-    let extra_mounts = mounts::resolve(cwd, &home_dir(), &inv.mounts, Some(flavor));
+    let extra_mounts = mounts::resolve(cwd, &chome, &inv.mounts, Some(flavor));
 
     let extra_host_args = profiles::mount_args(cwd, flavor, agent, inv.profile.as_deref(), &chome);
 

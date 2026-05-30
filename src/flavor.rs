@@ -189,6 +189,11 @@ fn effective_cache_entries(
         user_global_cache_entries(container_home),
     ];
     if let Some(root) = project_root {
+        if let Some((pf, _)) = crate::project::project_flavor(root)
+            && pf != flavor
+        {
+            layers.push(flavor_cache_entries(&pf, container_home));
+        }
         layers.push(project_cache_entries(root, container_home));
     }
     merge_cache_layers(&layers)
@@ -782,6 +787,32 @@ mod tests {
             args.windows(2)
                 .any(|w| w[0] == "-v" && w[1] == "sbx-mise-state-rust:/home/nick/.local/state/mise"),
             "missing state mount in {args:?}"
+        );
+    }
+
+    #[test]
+    fn cache_args_includes_project_flavor_caches_for_agent() {
+        let cfg = tmp_dir("ca-projflav-cfg");
+        let home = tmp_dir("ca-projflav-home");
+        let _g = set_test_paths(cfg, home);
+        FlavorConfig {
+            caches: vec!["@sbx-test-java:.cache/java".into()],
+            ..Default::default()
+        }
+        .save("java")
+        .unwrap();
+        let root = tmp_dir("ca-projflav-proj");
+        crate::config::Config {
+            flavor: Some("java".into()),
+            ..Default::default()
+        }
+        .save_to_dir(&root.join(".sbx"))
+        .unwrap();
+        let args = cache_args("claude", Some(&root), &PathBuf::from("/home/dev"));
+        assert!(
+            args.windows(2)
+                .any(|w| w[0] == "-v" && w[1] == "sbx-test-java:/home/dev/.cache/java"),
+            "expected java cache volume for agent run, got {args:?}"
         );
     }
 

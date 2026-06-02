@@ -190,7 +190,7 @@ fn effective_cache_entries(
     ];
     if let Some(root) = project_root {
         if let Some((pf, _)) = crate::project::project_flavor(root)
-            && pf != flavor
+            && (pf == flavor || FlavorConfig::load_or_default(flavor).agent.is_some())
         {
             layers.push(flavor_cache_entries(&pf, container_home));
         }
@@ -699,6 +699,47 @@ mod tests {
 
     use crate::util::set_test_paths;
 
+    #[test]
+    fn ad_hoc_flavor_volume_not_shadowed_by_project_flavor() {
+        let cfg = tmp_dir("adhoc-cfg");
+        let home = tmp_dir("adhoc-home");
+        let _g = set_test_paths(cfg, home);
+
+        FlavorConfig {
+            caches: vec!["@sbx-mise-nvim:.local/share/mise".into()],
+            ..Default::default()
+        }
+        .save("nvim")
+        .unwrap();
+        FlavorConfig {
+            caches: vec!["@sbx-mise-rust:.local/share/mise".into()],
+            ..Default::default()
+        }
+        .save("rust")
+        .unwrap();
+
+        let project = tmp_dir("adhoc-project");
+        Config {
+            flavor: Some("rust".into()),
+            ..Default::default()
+        }
+        .save(&project)
+        .unwrap();
+
+        let entries = effective_cache_entries("nvim", Some(&project), &dev_home());
+        let mise = entries
+            .iter()
+            .find(|e| e.container() == "/home/dev/.local/share/mise")
+            .expect("mise cache entry present");
+        assert_eq!(
+            mise,
+            &CacheEntry::Volume {
+                name: "sbx-mise-nvim".into(),
+                container: "/home/dev/.local/share/mise".into(),
+            }
+        );
+    }
+
     fn tmp_dir(label: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -800,6 +841,12 @@ mod tests {
             ..Default::default()
         }
         .save("java")
+        .unwrap();
+        FlavorConfig {
+            agent: Some(crate::config::Agent::default()),
+            ..Default::default()
+        }
+        .save("claude")
         .unwrap();
         let root = tmp_dir("ca-projflav-proj");
         crate::config::Config {

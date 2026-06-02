@@ -161,6 +161,33 @@ pub fn ensure_dns_route(hostname: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn flush_local_dns_cache() {
+    let attempts: [(&str, &[&str]); 3] = [
+        ("resolvectl", &["flush-caches"]),
+        ("systemd-resolve", &["--flush-caches"]),
+        ("nscd", &["-i", "hosts"]),
+    ];
+    let mut ran_but_failed = false;
+    for (bin, args) in attempts {
+        match Command::new(bin)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+        {
+            Ok(s) if s.success() => {
+                log(format!("flushed local DNS cache ({bin})"));
+                return;
+            }
+            Ok(_) => ran_but_failed = true,
+            Err(_) => {}
+        }
+    }
+    if ran_but_failed {
+        log("note: couldn't flush local DNS cache; if a new public host won't resolve, run: resolvectl flush-caches");
+    }
+}
+
 pub fn write_project_fragment(pname: &str, hostnames: &[String]) -> Result<(), String> {
     crate::fragments::write(&projects_dir(), pname, hostnames)
 }

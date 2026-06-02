@@ -1,6 +1,11 @@
 mounts = [
     "~/.config/nvim",
     "~/projects/personal/neovim/plugins",
+    "~/.solidtime_api_config",
+    "~/.config/solidtime",
+    "~/.gitconfig",
+    "~/.git_",
+    "~/.gitattributes",
 ]
 
 caches = [
@@ -9,8 +14,15 @@ caches = [
     ".cache/nvim",
     ".vim/undodir",
     ".supermaven",
-    "@sbx-mise-nvim:.local/share/mise",
-    "@sbx-mise-state-nvim:.local/state/mise",
+    "@sbx-nvim-rocks:.local/share/nvim/lazy/luarocks.nvim/.rocks",
 ]
 
 start = "nvim ."
+
+allow-bare-repo = true
+
+clipboard = true
+
+forward-sockets = [
+    "discord-ipc-0",
+]

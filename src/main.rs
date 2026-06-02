@@ -268,5 +268,13 @@ fn dispatch_config(action: Option<ConfigCmd>) {
             };
             commands::gui::run(&cwd(), act);
         }
+        ConfigCmd::Clipboard { action } => {
+            let act = match action.unwrap_or(GuiCmd::Status) {
+                GuiCmd::On => commands::clipboard::Action::On,
+                GuiCmd::Off => commands::clipboard::Action::Off,
+                GuiCmd::Status => commands::clipboard::Action::Status,
+            };
+            commands::clipboard::run(act);
+        }
     }
 }

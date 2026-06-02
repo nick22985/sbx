@@ -211,6 +211,10 @@ mod tests {
             caches: vec![],
             start: None,
             allow_bare_repo: false,
+            clipboard: false,
+            forward_sockets: vec![],
+            share_runtime_dir: false,
+            gpg: false,
             agent: None,
         }
         .save("npm")
@@ -256,6 +260,10 @@ mod tests {
             caches: vec![],
             start: None,
             allow_bare_repo: false,
+            clipboard: false,
+            forward_sockets: vec![],
+            share_runtime_dir: false,
+            gpg: false,
             agent: None,
         }
         .save("npm")
@@ -327,6 +335,10 @@ mod tests {
             caches: vec![],
             start: None,
             allow_bare_repo: false,
+            clipboard: false,
+            forward_sockets: vec![],
+            share_runtime_dir: false,
+            gpg: false,
             agent: None,
         }
         .save("nvim")
@@ -360,6 +372,10 @@ mod tests {
             caches: vec![],
             start: None,
             allow_bare_repo: false,
+            clipboard: false,
+            forward_sockets: vec![],
+            share_runtime_dir: false,
+            gpg: false,
             agent: None,
         }
         .save("java")

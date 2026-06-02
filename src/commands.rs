@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod build;
 pub mod clean;
+pub mod clipboard;
 pub mod docker;
 pub mod env;
 pub mod gui;

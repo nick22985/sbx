@@ -343,6 +343,10 @@ pub struct GlobalConfig {
     pub container_home: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_bare_repo: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clipboard: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub gpg: bool,
 }
 
 impl GlobalConfig {
@@ -381,6 +385,14 @@ pub struct FlavorConfig {
     pub start: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_bare_repo: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clipboard: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forward_sockets: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub share_runtime_dir: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub gpg: bool,
     /// Presence of this table marks the flavor as a first-class AI/CLI agent,
     /// launchable directly via `sbx <flavor> [args...]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -578,6 +590,10 @@ mod tests {
             caches: vec![".local/share/nvim".into(), ".cache/nvim".into()],
             start: Some("nvim .".into()),
             allow_bare_repo: false,
+            clipboard: false,
+            forward_sockets: vec![],
+            share_runtime_dir: false,
+            gpg: false,
             agent: None,
         };
         let written = original.save("nvim").unwrap();
@@ -653,6 +669,8 @@ mod tests {
             caches: vec![".cache/global".into()],
             container_home: None,
             allow_bare_repo: false,
+            clipboard: false,
+            gpg: false,
         };
         let a = round_trip(&cfg);
         let b = round_trip(&cfg);

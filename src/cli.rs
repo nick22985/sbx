@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 
 use clap::{Parser, Subcommand};
-use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
+use clap_complete::engine::{ArgValueCompleter, CompletionCandidate, PathCompleter};
 
 use crate::env_file;
 use crate::flavor::list_flavors;
@@ -367,6 +367,7 @@ pub enum MountCmd {
         global: bool,
     },
     Add {
+        #[arg(add = ArgValueCompleter::new(PathCompleter::any()))]
         spec: String,
         #[arg(short = 'g', long = "global")]
         global: bool,
@@ -544,6 +545,11 @@ pub enum ConfigCmd {
     },
     #[command(alias = "display", alias = "wayland", alias = "x11")]
     Gui {
+        #[command(subcommand)]
+        action: Option<GuiCmd>,
+    },
+    #[command(alias = "clip")]
+    Clipboard {
         #[command(subcommand)]
         action: Option<GuiCmd>,
     },

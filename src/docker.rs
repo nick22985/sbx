@@ -174,7 +174,11 @@ fn container_id(name: &str) -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 pub fn bridge_subnet() -> String {
@@ -200,7 +204,11 @@ fn container_inspect_bridge(field: &str) -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -413,6 +421,171 @@ pub fn gui_mount_args(project_root: &Path) -> Vec<String> {
     out
 }
 
+pub fn clipboard_enabled(flavor: &str) -> bool {
+    crate::config::FlavorConfig::load_or_default(flavor).clipboard
+        || crate::config::GlobalConfig::load_or_default().clipboard
+}
+
+pub fn runtime_socket_args(flavor: &str, project_root: &Path) -> Vec<String> {
+    if project_gui_enabled(project_root) {
+        return Vec::new();
+    }
+    let fc = crate::config::FlavorConfig::load_or_default(flavor);
+
+    if fc.share_runtime_dir {
+        return share_runtime_dir_args();
+    }
+
+    let clip = clipboard_enabled(flavor);
+
+    let wayland = if clip {
+        std::env::var("WAYLAND_DISPLAY")
+            .ok()
+            .filter(|w| !w.is_empty() && !w.starts_with('/'))
+    } else {
+        None
+    };
+
+    let mut names: Vec<String> = Vec::new();
+    if let Some(w) = &wayland {
+        names.push(w.clone());
+    }
+    names.extend(fc.forward_sockets.iter().cloned());
+    if names.is_empty() {
+        return Vec::new();
+    }
+
+    let rt = match std::env::var("XDG_RUNTIME_DIR") {
+        Ok(rt) if !rt.is_empty() => rt,
+        _ => {
+            log("socket forwarding enabled but no host XDG_RUNTIME_DIR found");
+            return Vec::new();
+        }
+    };
+
+    let uid = crate::flavor::nix_uid();
+    let container_rt = format!("/run/user/{uid}");
+    let mut mounts: Vec<String> = Vec::new();
+    let mut forwarded: Vec<String> = Vec::new();
+    for name in &names {
+        let host = PathBuf::from(&rt).join(name);
+        if host.exists() {
+            mounts.push("-v".into());
+            mounts.push(format!("{}:{container_rt}/{name}", host.display()));
+            forwarded.push(name.clone());
+        } else {
+            log(format!(
+                "socket forwarding: {} not found on host, skipping",
+                host.display()
+            ));
+        }
+    }
+    if forwarded.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = vec!["-e".into(), format!("XDG_RUNTIME_DIR={container_rt}")];
+    if let Some(w) = &wayland
+        && forwarded.iter().any(|f| f == w)
+    {
+        out.push("-e".into());
+        out.push(format!("WAYLAND_DISPLAY={w}"));
+    }
+    out.extend(mounts);
+    log(format!("socket forwarding: {}", forwarded.join(", ")));
+    out
+}
+
+fn share_runtime_dir_args() -> Vec<String> {
+    let rt = match std::env::var("XDG_RUNTIME_DIR") {
+        Ok(rt) if !rt.is_empty() && Path::new(&rt).is_dir() => rt,
+        _ => {
+            log("share-runtime-dir enabled but no usable host XDG_RUNTIME_DIR found");
+            return Vec::new();
+        }
+    };
+    let uid = crate::flavor::nix_uid();
+    let container_rt = format!("/run/user/{uid}");
+    let mut out = vec![
+        "-v".into(),
+        format!("{rt}:{container_rt}"),
+        "-e".into(),
+        format!("XDG_RUNTIME_DIR={container_rt}"),
+    ];
+    if let Ok(w) = std::env::var("WAYLAND_DISPLAY")
+        && !w.is_empty()
+    {
+        out.push("-e".into());
+        out.push(format!("WAYLAND_DISPLAY={w}"));
+    }
+    if let Ok(bus) = std::env::var("DBUS_SESSION_BUS_ADDRESS")
+        && !bus.is_empty()
+    {
+        out.push("-e".into());
+        out.push(format!("DBUS_SESSION_BUS_ADDRESS={bus}"));
+    }
+    log(format!("sharing host runtime dir: {rt} -> {container_rt}"));
+    out
+}
+
+pub fn gpg_enabled(flavor: &str, force: bool) -> bool {
+    force
+        || crate::config::FlavorConfig::load_or_default(flavor).gpg
+        || crate::config::GlobalConfig::load_or_default().gpg
+}
+
+fn gpgconf_dir(key: &str) -> Option<PathBuf> {
+    let out = Command::new("gpgconf")
+        .args(["--list-dirs", key])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout);
+    let line = s.lines().next()?.trim();
+    if line.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(line))
+}
+
+pub fn gpg_mount_args(container_home: &Path) -> Vec<String> {
+    let homedir = gpgconf_dir("homedir").unwrap_or_else(|| home_dir().join(".gnupg"));
+    if !homedir.is_dir() {
+        log(format!(
+            "gpg forwarding enabled but host GnuPG home {} not found, skipping",
+            homedir.display()
+        ));
+        return Vec::new();
+    }
+    let container_gnupg = container_home.join(".gnupg");
+    let mut out = vec![
+        "-v".into(),
+        format!("{}:{}", homedir.display(), container_gnupg.display()),
+    ];
+    let sock = gpgconf_dir("agent-socket").unwrap_or_else(|| homedir.join("S.gpg-agent"));
+    if sock.exists() {
+        let uid = crate::flavor::nix_uid();
+        out.push("-v".into());
+        out.push(format!(
+            "{}:/run/user/{uid}/gnupg/S.gpg-agent",
+            sock.display()
+        ));
+    } else {
+        log(format!(
+            "gpg forwarding: agent socket {} not found (is gpg-agent running?)",
+            sock.display()
+        ));
+    }
+    log(format!(
+        "forwarding gpg: {} -> {}",
+        homedir.display(),
+        container_gnupg.display()
+    ));
+    out
+}
+
 fn render_or_video_gid() -> Option<u32> {
     use std::os::unix::fs::MetadataExt;
     for node in ["/dev/dri/renderD128", "/dev/dri/card0"] {
@@ -583,6 +756,7 @@ pub struct RunSpec<'a> {
     pub labels: Vec<String>,
     pub mount_docker_socket: bool,
     pub extra_env: Vec<(String, String)>,
+    pub force_gpg: bool,
 }
 
 pub fn run_container(spec: RunSpec<'_>) -> i32 {
@@ -654,6 +828,14 @@ pub fn run_container(spec: RunSpec<'_>) -> i32 {
     }
     for arg in gui_mount_args(spec.project_root) {
         cmd.arg(arg);
+    }
+    for arg in runtime_socket_args(spec.flavor, spec.project_root) {
+        cmd.arg(arg);
+    }
+    if gpg_enabled(spec.flavor, spec.force_gpg) {
+        for arg in gpg_mount_args(&spec.container_home) {
+            cmd.arg(arg);
+        }
     }
     if spec.mount_docker_socket {
         for arg in docker_socket_mount_args() {
@@ -781,6 +963,8 @@ pub fn exec_into(container: &str, project_root: &Path, entry: &[String]) -> io::
 mod tests {
     use super::*;
 
+    static XDG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn parse_port_line_accepts_plain_number() {
         assert_eq!(parse_port_line("8080"), Some(8080));
@@ -807,5 +991,158 @@ mod tests {
     #[test]
     fn parse_port_line_returns_none_for_non_numeric() {
         assert_eq!(parse_port_line("eighty"), None);
+    }
+
+    #[test]
+    fn clipboard_mount_args_empty_when_globally_disabled() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let pid = std::process::id();
+        let base = std::env::temp_dir().join(format!("sbx-clip-{pid}-{nanos}"));
+        let cfg = base.join("cfg");
+        let home = base.join("home");
+        std::fs::create_dir_all(&cfg).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        let _g = crate::util::set_test_paths(cfg, home.clone());
+        assert!(!clipboard_enabled("nvim"));
+        assert!(runtime_socket_args("nvim", &home).is_empty());
+    }
+
+    #[test]
+    fn runtime_socket_args_forwards_declared_socket() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let pid = std::process::id();
+        let base = std::env::temp_dir().join(format!("sbx-sock-{pid}-{nanos}"));
+        let cfg = base.join("cfg");
+        let home = base.join("home");
+        let rt = base.join("rt");
+        std::fs::create_dir_all(&cfg).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&rt).unwrap();
+        let _env = XDG_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        std::fs::write(rt.join("discord-ipc-0"), b"").unwrap();
+        let _g = crate::util::set_test_paths(cfg, home.clone());
+        crate::config::FlavorConfig {
+            forward_sockets: vec!["discord-ipc-0".into()],
+            ..Default::default()
+        }
+        .save("nvim")
+        .unwrap();
+
+        let prev = std::env::var("XDG_RUNTIME_DIR").ok();
+        unsafe {
+            std::env::set_var("XDG_RUNTIME_DIR", &rt);
+        }
+        let args = runtime_socket_args("nvim", &home);
+        unsafe {
+            match &prev {
+                Some(p) => std::env::set_var("XDG_RUNTIME_DIR", p),
+                None => std::env::remove_var("XDG_RUNTIME_DIR"),
+            }
+        }
+
+        let uid = crate::flavor::nix_uid();
+        let mount = format!(
+            "{}:/run/user/{uid}/discord-ipc-0",
+            rt.join("discord-ipc-0").display()
+        );
+        assert!(
+            args.windows(2).any(|w| w[0] == "-v" && w[1] == mount),
+            "expected socket mount, got {args:?}"
+        );
+        assert!(
+            args.iter()
+                .any(|a| a == &format!("XDG_RUNTIME_DIR=/run/user/{uid}")),
+            "expected container XDG_RUNTIME_DIR, got {args:?}"
+        );
+    }
+
+    #[test]
+    fn share_runtime_dir_binds_whole_dir() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let pid = std::process::id();
+        let base = std::env::temp_dir().join(format!("sbx-share-{pid}-{nanos}"));
+        let cfg = base.join("cfg");
+        let home = base.join("home");
+        let rt = base.join("rt");
+        std::fs::create_dir_all(&cfg).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&rt).unwrap();
+        let _env = XDG_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _g = crate::util::set_test_paths(cfg, home.clone());
+        crate::config::FlavorConfig {
+            share_runtime_dir: true,
+            ..Default::default()
+        }
+        .save("nvim")
+        .unwrap();
+
+        let prev = std::env::var("XDG_RUNTIME_DIR").ok();
+        unsafe {
+            std::env::set_var("XDG_RUNTIME_DIR", &rt);
+        }
+        let args = runtime_socket_args("nvim", &home);
+        unsafe {
+            match &prev {
+                Some(p) => std::env::set_var("XDG_RUNTIME_DIR", p),
+                None => std::env::remove_var("XDG_RUNTIME_DIR"),
+            }
+        }
+
+        let uid = crate::flavor::nix_uid();
+        let mount = format!("{}:/run/user/{uid}", rt.display());
+        assert!(
+            args.windows(2).any(|w| w[0] == "-v" && w[1] == mount),
+            "expected whole runtime-dir bind, got {args:?}"
+        );
+    }
+
+    fn gpg_test_paths(label: &str) -> (PathBuf, PathBuf) {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let pid = std::process::id();
+        let base = std::env::temp_dir().join(format!("sbx-{label}-{pid}-{nanos}"));
+        let cfg = base.join("cfg");
+        let home = base.join("home");
+        std::fs::create_dir_all(&cfg).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        (cfg, home)
+    }
+
+    #[test]
+    fn gpg_disabled_by_default() {
+        let (cfg, home) = gpg_test_paths("gpg-off");
+        let _g = crate::util::set_test_paths(cfg, home);
+        assert!(!gpg_enabled("claude", false));
+    }
+
+    #[test]
+    fn gpg_force_overrides_disabled_config() {
+        let (cfg, home) = gpg_test_paths("gpg-force");
+        let _g = crate::util::set_test_paths(cfg, home);
+        assert!(gpg_enabled("claude", true));
+    }
+
+    #[test]
+    fn gpg_enabled_via_flavor_config() {
+        let (cfg, home) = gpg_test_paths("gpg-flavor");
+        let _g = crate::util::set_test_paths(cfg, home);
+        crate::config::FlavorConfig {
+            gpg: true,
+            ..Default::default()
+        }
+        .save("nvim")
+        .unwrap();
+        assert!(gpg_enabled("nvim", false));
     }
 }

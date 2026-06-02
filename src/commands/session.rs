@@ -327,6 +327,7 @@ pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32
                 log(format!("public: {e}"));
             }
         }
+        public::flush_local_dns_cache();
         let hostnames: Vec<String> = public_routes.iter().map(|r| r.hostname.clone()).collect();
         if let Err(e) = public::write_project_fragment(&pname, &hostnames) {
             log(format!("public: {e}"));
@@ -418,6 +419,7 @@ pub fn run_session(flavor: &str, project_root: &Path, entry: Vec<String>) -> i32
         labels,
         mount_docker_socket: docker::project_docker_enabled(project_root),
         extra_env,
+        force_gpg: false,
     };
     let code = docker::run_container(spec);
     cleanup.run();

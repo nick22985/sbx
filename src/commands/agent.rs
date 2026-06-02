@@ -18,6 +18,7 @@ pub struct Invocation {
     pub profile: Option<String>,
     pub rc: bool,
     pub no_rc: bool,
+    pub gpg: bool,
 }
 
 pub fn is_agent(flavor: &str) -> bool {
@@ -110,6 +111,7 @@ fn launch(cwd: &Path, flavor: &str, agent: &Agent, inv: Invocation) -> i32 {
         labels: Vec::new(),
         mount_docker_socket,
         extra_env,
+        force_gpg: inv.gpg,
     };
     docker::run_container(spec)
 }
@@ -152,6 +154,7 @@ fn extract_sbx_flags(args: Vec<String>, agent: &Agent, inv: &mut Invocation) -> 
         match a.as_str() {
             "--shell" => inv.shell = true,
             "--docker" => inv.docker = true,
+            "--git" | "--gpg" => inv.gpg = true,
             "--safe" | "-s" => inv.safe = true,
             "--mount" | "-m" => match iter.next() {
                 Some(v) => inv.mounts.push(v),
